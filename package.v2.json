@@ -5,7 +5,7 @@
         "labels": "云盘",
         "version": "1.8.31",
         "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Frontend/refs/heads/v2/src/assets/images/misc/u115.png",
-        "author": "DDSRem",
+        "author": "DDSRem,old",
         "level": 1,
         "history": {
             "v1.8.31": "全量同步消息格式错误",
