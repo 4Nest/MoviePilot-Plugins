@@ -116,7 +116,7 @@ class FileMonitorHandler(FileSystemEventHandler):
 
 class P115StrmHelper(_PluginBase):
     # 插件名称
-    plugin_name = "115网盘STRM助手"
+    plugin_name = "115网盘STRM助手.old"
     # 插件描述
     plugin_desc = "115网盘STRM生成一条龙服务"
     # 插件图标
