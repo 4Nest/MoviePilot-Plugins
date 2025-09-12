@@ -1,0 +1,15 @@
+{
+  "DuplicateFinder": {
+    "name": "重复文件查找",
+    "description": "分别查找电影和电视剧路径下同一文件夹中的重复文件，并通过MP发送通知",
+    "labels": "工具,文件管理",
+    "version": "1.0",
+    "icon": "duplicate.png",
+    "author": "Your Name",
+    "level": 1,
+    "history": {
+      "v1.0": "初始版本"
+    }
+  }
+
+}
