@@ -20,11 +20,11 @@ class DuplicateFinder(_PluginBase):
     # 插件图标
     plugin_icon = "duplicate.png"
     # 插件版本
-    plugin_version = "1.5"
+    plugin_version = "1.0"
     # 插件作者
     plugin_author = "NEST"
     # 作者主页
-    author_url = "https://github.com/yourname"
+    author_url = "https://github.com/4Nest/MoviePilot-Plugins"
     # 插件配置项ID前缀
     plugin_config_prefix = "duplicatefinder_"
     # 加载顺序
@@ -437,4 +437,5 @@ class DuplicateFinder(_PluginBase):
             message += f"- {folder_path}\n"
 
         logger.info(message)
+
         self._send_message(message)
