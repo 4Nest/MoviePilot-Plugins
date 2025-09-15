@@ -6,11 +6,17 @@
     "version": "1.0",
     "icon": "duplicate.png",
     "author": "NEST",
-    "level": 1,
-    "history": {
-      "v1.0": "初始版本"
-    }
+    "level": 1
   }
-
+  "BilibiliNotify": {
+    "name": "Bilibili番剧更新通知",
+    "description": "监控Bilibili番剧更新，当有新番剧更新时发送通知。",
+    "labels": "通知,Bilibili",
+    "version": "1.0",
+    "icon": "Bilibili_A.png",
+    "author": "NEST",
+    "level": 1
+  }
 }
+
 
