@@ -7,7 +7,7 @@
         "icon": "duplicate.png",
         "author": "NEST",
         "level": 1
-    }
+    },
     "BilibiliNotify": {
         "name": "Bilibili番剧更新通知",
         "description": "监控Bilibili番剧更新，当有新番剧更新时发送通知。",
