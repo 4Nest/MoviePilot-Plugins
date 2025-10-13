@@ -1,21 +1,20 @@
 {
-  "DuplicateFinder": {
-    "name": "重复文件查找",
-    "description": "分别查找电影和电视剧路径下同一文件夹中的重复文件，并通过MP发送通知",
-    "labels": "工具,文件管理",
-    "version": "1.0",
-    "author": "NEST",
-    "level": 1
-  }
-  "BilibiliNotify": {
-    "name": "Bilibili番剧更新通知",
-    "description": "监控Bilibili番剧更新，当有新番剧更新时发送通知。",
-    "labels": "通知,Bilibili",
-    "version": "1.0",
-    "author": "NEST",
-    "level": 1
-  }
+    "DuplicateFinder": {
+        "name": "重复文件查找",
+        "description": "分别查找电影和电视剧路径下同一文件夹中的重复文件，并通过MP发送通知",
+        "labels": "工具,文件管理",
+        "version": "1.0",
+        "icon": "duplicate.png",
+        "author": "NEST",
+        "level": 1
+    }
+    "BilibiliNotify": {
+        "name": "Bilibili番剧更新通知",
+        "description": "监控Bilibili番剧更新，当有新番剧更新时发送通知。",
+        "labels": "通知,Bilibili",
+        "version": "1.0",
+        "icon": "Bilibili_A.png",
+        "author": "NEST",
+        "level": 1
+    }
 }
-
-
-
