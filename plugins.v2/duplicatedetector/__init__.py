@@ -18,7 +18,7 @@ class DuplicateDetector(_PluginBase):
     # 插件图标
     plugin_icon = "clean.png"
     # 插件版本
-    plugin_version = "1.2"
+    plugin_version = "1.3"
     # 插件作者
     plugin_author = "NEST"
     # 作者主页
@@ -214,6 +214,7 @@ class DuplicateDetector(_PluginBase):
                                             'items': [
                                                 {'title': 'Local/Rclone', 'value': 'local'},
                                                 {'title': '115网盘', 'value': 'u115'},
+                                                {'title': '115网盘Plus', 'value': '115网盘Plus'},
                                                 {'title': '123云盘', 'value': '123云盘'},
                                             ],
                                             'placeholder': '默认local'
