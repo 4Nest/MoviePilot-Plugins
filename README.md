@@ -21,6 +21,8 @@
 
 ### 媒体库封面生成 (MediaCoverGenerator)
 
+> **Fork 来源：** 本插件基于 [justzerock/MoviePilot-Plugins](https://github.com/justzerock/MoviePilot-Plugins) 的 MediaCoverGenerator 修改完成，感谢原作者！
+
 **功能特性：**
 - 支持 Emby / Jellyfin 媒体服务器
 - 4 种静态封面风格 + 4 种动态封面风格（APNG/GIF）
