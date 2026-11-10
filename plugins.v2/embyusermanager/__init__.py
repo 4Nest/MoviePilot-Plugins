@@ -132,7 +132,7 @@ class EmbyUserManager(_PluginBase):
     plugin_name = "Emby用户管理"
     plugin_desc = "管理Emby媒体服务器账号增删改查、MoviePilot登录准入、黑白名单及订阅数据。"
     plugin_icon = "emby.png"
-    plugin_version = "1.2.0"
+    plugin_version = "1.2.1"
     plugin_author = "4Nest"
     author_url = "https://github.com/4Nest"
     plugin_config_prefix = "embyusermanager_"

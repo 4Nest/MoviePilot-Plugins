@@ -1119,39 +1119,54 @@ onMounted(() => {
             @update:model-value="onEditServerChange"
           />
 
-          <v-row dense>
-            <v-col cols="12" sm="6">
-              <v-text-field
-                v-model="editForm.new_username"
-                label="Emby 用户名"
-                variant="outlined"
-                density="compact"
-                hint="修改用户名会自动同步迁移本地订阅归属"
-                persistent-hint
-              />
-            </v-col>
-            <v-col cols="12" sm="6">
+          <v-text-field
+            v-model="editForm.new_username"
+            label="Emby 用户名"
+            variant="outlined"
+            density="compact"
+            hint="修改用户名会自动同步迁移本地订阅归属"
+            persistent-hint
+          />
+
+          <section class="emby-password-panel" :class="{ 'is-editing': editForm.change_password }">
+            <div class="emby-password-panel__header">
+              <div class="emby-password-panel__intro">
+                <div class="emby-password-panel__icon">
+                  <v-icon icon="mdi-key-outline" size="19" />
+                </div>
+                <div>
+                  <strong>登录密码</strong>
+                  <span>仅在需要修改或清空密码时开启</span>
+                </div>
+              </div>
               <v-switch
                 v-model="editForm.change_password"
+                class="emby-password-panel__switch"
                 color="warning"
                 density="compact"
-                label="重置 / 修改登录密码"
+                label="修改密码"
                 hide-details
               />
+            </div>
+            <div v-if="editForm.change_password" class="emby-password-panel__form">
               <v-text-field
-                v-if="editForm.change_password"
                 v-model="editForm.new_password"
                 :type="showEditPassword ? 'text' : 'password'"
-                label="新密码（留空表示清空密码设为免密）"
+                label="新密码"
+                placeholder="输入新密码"
                 variant="outlined"
                 density="compact"
-                hide-details
-                class="mt-2"
+                hint="留空将清除现有密码，并允许该账号免密登录"
+                persistent-hint
                 :append-inner-icon="showEditPassword ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
                 @click:append-inner="showEditPassword = !showEditPassword"
               />
-            </v-col>
-          </v-row>
+            </div>
+            <div v-else class="emby-password-panel__status">
+              <v-icon icon="mdi-lock-check-outline" size="15" />
+              当前密码保持不变
+            </div>
+          </section>
 
           <v-divider class="my-1" />
           <div class="text-subtitle-2 font-weight-bold">账号状态与权限策略</div>
@@ -2031,6 +2046,86 @@ onMounted(() => {
   padding: 20px 22px !important;
 }
 
+.emby-password-panel {
+  padding: 14px 16px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  border-radius: 14px;
+  background: rgba(var(--v-theme-on-surface), 0.025);
+  transition: border-color 150ms ease, background 150ms ease;
+}
+
+.emby-password-panel.is-editing {
+  border-color: rgba(var(--v-theme-warning), 0.22);
+  background: rgba(var(--v-theme-warning), 0.045);
+}
+
+.emby-password-panel__header {
+  display: flex;
+  min-height: 36px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.emby-password-panel__intro {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.emby-password-panel__icon {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border-radius: 10px;
+  background: rgba(var(--v-theme-warning), 0.1);
+  color: rgb(var(--v-theme-warning));
+  place-items: center;
+}
+
+.emby-password-panel__intro strong,
+.emby-password-panel__intro span {
+  display: block;
+}
+
+.emby-password-panel__intro strong {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.emby-password-panel__intro span {
+  margin-block-start: 2px;
+  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  font-size: 10px;
+}
+
+.emby-password-panel__switch {
+  flex: 0 0 auto;
+}
+
+.emby-password-panel__form {
+  margin-block-start: 14px;
+  padding-block-start: 14px;
+  border-block-start: 1px solid rgba(var(--v-theme-warning), 0.1);
+}
+
+.emby-password-panel__form :deep(.v-messages) {
+  min-height: 18px;
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.emby-password-panel__status {
+  display: flex;
+  align-items: center;
+  margin-block-start: 4px;
+  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
+  font-size: 10px;
+  gap: 5px;
+}
+
 .emby-dialog-note {
   display: flex;
   align-items: flex-start;
@@ -2090,5 +2185,8 @@ onMounted(() => {
   .emby-status-pill { padding: 4px 6px; font-size: 9px; }
   .emby-dialog__title { padding: 16px !important; }
   .emby-dialog__content { padding: 16px !important; }
+  .emby-password-panel { padding: 12px; }
+  .emby-password-panel__header { align-items: flex-start; flex-wrap: wrap; gap: 8px; }
+  .emby-password-panel__switch { margin-inline-start: 44px; }
 }
 </style>

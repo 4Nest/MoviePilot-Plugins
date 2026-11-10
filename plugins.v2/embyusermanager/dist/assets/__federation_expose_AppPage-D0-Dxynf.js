@@ -89,24 +89,35 @@ const _hoisted_51 = {
   key: 0,
   class: "text-caption text-medium-emphasis"
 };
-const _hoisted_52 = {
-  key: 0,
-  class: "text-caption text-medium-emphasis"
-};
-const _hoisted_53 = { class: "emby-dialog-note" };
-const _hoisted_54 = {
-  key: 1,
-  class: "text-center py-6 text-medium-emphasis"
-};
+const _hoisted_52 = { class: "emby-password-panel__header" };
+const _hoisted_53 = { class: "emby-password-panel__intro" };
+const _hoisted_54 = { class: "emby-password-panel__icon" };
 const _hoisted_55 = {
   key: 0,
-  class: "text-caption text-medium-emphasis"
+  class: "emby-password-panel__form"
 };
 const _hoisted_56 = {
   key: 1,
+  class: "emby-password-panel__status"
+};
+const _hoisted_57 = {
+  key: 0,
+  class: "text-caption text-medium-emphasis"
+};
+const _hoisted_58 = { class: "emby-dialog-note" };
+const _hoisted_59 = {
+  key: 1,
+  class: "text-center py-6 text-medium-emphasis"
+};
+const _hoisted_60 = {
+  key: 0,
+  class: "text-caption text-medium-emphasis"
+};
+const _hoisted_61 = {
+  key: 1,
   class: "text-caption ms-1"
 };
-const _hoisted_57 = { class: "text-body-2 mb-1" };
+const _hoisted_62 = { class: "text-body-2 mb-1" };
 const {computed,inject,onMounted,reactive,ref} = await importShared('vue');
 
 const _sfc_main = /* @__PURE__ */ _defineComponent({
@@ -1470,59 +1481,65 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       "hide-details": "",
                       "onUpdate:modelValue": onEditServerChange
                     }, null, 8, ["model-value", "items"])) : _createCommentVNode("", true),
-                    _createVNode(_component_v_row, { dense: "" }, {
-                      default: _withCtx(() => [
-                        _createVNode(_component_v_col, {
-                          cols: "12",
-                          sm: "6"
-                        }, {
-                          default: _withCtx(() => [
-                            _createVNode(_component_v_text_field, {
-                              modelValue: editForm.new_username,
-                              "onUpdate:modelValue": _cache[23] || (_cache[23] = ($event) => editForm.new_username = $event),
-                              label: "Emby 用户名",
-                              variant: "outlined",
-                              density: "compact",
-                              hint: "修改用户名会自动同步迁移本地订阅归属",
-                              "persistent-hint": ""
-                            }, null, 8, ["modelValue"])
+                    _createVNode(_component_v_text_field, {
+                      modelValue: editForm.new_username,
+                      "onUpdate:modelValue": _cache[23] || (_cache[23] = ($event) => editForm.new_username = $event),
+                      label: "Emby 用户名",
+                      variant: "outlined",
+                      density: "compact",
+                      hint: "修改用户名会自动同步迁移本地订阅归属",
+                      "persistent-hint": ""
+                    }, null, 8, ["modelValue"]),
+                    _createElementVNode("section", {
+                      class: _normalizeClass(["emby-password-panel", { "is-editing": editForm.change_password }])
+                    }, [
+                      _createElementVNode("div", _hoisted_52, [
+                        _createElementVNode("div", _hoisted_53, [
+                          _createElementVNode("div", _hoisted_54, [
+                            _createVNode(_component_v_icon, {
+                              icon: "mdi-key-outline",
+                              size: "19"
+                            })
                           ]),
-                          _: 1
-                        }),
-                        _createVNode(_component_v_col, {
-                          cols: "12",
-                          sm: "6"
-                        }, {
-                          default: _withCtx(() => [
-                            _createVNode(_component_v_switch, {
-                              modelValue: editForm.change_password,
-                              "onUpdate:modelValue": _cache[24] || (_cache[24] = ($event) => editForm.change_password = $event),
-                              color: "warning",
-                              density: "compact",
-                              label: "重置 / 修改登录密码",
-                              "hide-details": ""
-                            }, null, 8, ["modelValue"]),
-                            editForm.change_password ? (_openBlock(), _createBlock(_component_v_text_field, {
-                              key: 0,
-                              modelValue: editForm.new_password,
-                              "onUpdate:modelValue": _cache[25] || (_cache[25] = ($event) => editForm.new_password = $event),
-                              type: showEditPassword.value ? "text" : "password",
-                              label: "新密码（留空表示清空密码设为免密）",
-                              variant: "outlined",
-                              density: "compact",
-                              "hide-details": "",
-                              class: "mt-2",
-                              "append-inner-icon": showEditPassword.value ? "mdi-eye-off-outline" : "mdi-eye-outline",
-                              "onClick:appendInner": _cache[26] || (_cache[26] = ($event) => showEditPassword.value = !showEditPassword.value)
-                            }, null, 8, ["modelValue", "type", "append-inner-icon"])) : _createCommentVNode("", true)
-                          ]),
-                          _: 1
-                        })
+                          _cache[88] || (_cache[88] = _createElementVNode("div", null, [
+                            _createElementVNode("strong", null, "登录密码"),
+                            _createElementVNode("span", null, "仅在需要修改或清空密码时开启")
+                          ], -1))
+                        ]),
+                        _createVNode(_component_v_switch, {
+                          modelValue: editForm.change_password,
+                          "onUpdate:modelValue": _cache[24] || (_cache[24] = ($event) => editForm.change_password = $event),
+                          class: "emby-password-panel__switch",
+                          color: "warning",
+                          density: "compact",
+                          label: "修改密码",
+                          "hide-details": ""
+                        }, null, 8, ["modelValue"])
                       ]),
-                      _: 1
-                    }),
+                      editForm.change_password ? (_openBlock(), _createElementBlock("div", _hoisted_55, [
+                        _createVNode(_component_v_text_field, {
+                          modelValue: editForm.new_password,
+                          "onUpdate:modelValue": _cache[25] || (_cache[25] = ($event) => editForm.new_password = $event),
+                          type: showEditPassword.value ? "text" : "password",
+                          label: "新密码",
+                          placeholder: "输入新密码",
+                          variant: "outlined",
+                          density: "compact",
+                          hint: "留空将清除现有密码，并允许该账号免密登录",
+                          "persistent-hint": "",
+                          "append-inner-icon": showEditPassword.value ? "mdi-eye-off-outline" : "mdi-eye-outline",
+                          "onClick:appendInner": _cache[26] || (_cache[26] = ($event) => showEditPassword.value = !showEditPassword.value)
+                        }, null, 8, ["modelValue", "type", "append-inner-icon"])
+                      ])) : (_openBlock(), _createElementBlock("div", _hoisted_56, [
+                        _createVNode(_component_v_icon, {
+                          icon: "mdi-lock-check-outline",
+                          size: "15"
+                        }),
+                        _cache[89] || (_cache[89] = _createTextVNode(" 当前密码保持不变 ", -1))
+                      ]))
+                    ], 2),
                     _createVNode(_component_v_divider, { class: "my-1" }),
-                    _cache[89] || (_cache[89] = _createElementVNode("div", { class: "text-subtitle-2 font-weight-bold" }, "账号状态与权限策略", -1)),
+                    _cache[91] || (_cache[91] = _createElementVNode("div", { class: "text-subtitle-2 font-weight-bold" }, "账号状态与权限策略", -1)),
                     _createVNode(_component_v_row, { dense: "" }, {
                       default: _withCtx(() => [
                         _createVNode(_component_v_col, {
@@ -1668,7 +1685,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       "hide-details": ""
                     }, null, 8, ["modelValue"]),
                     _createVNode(_component_v_divider, { class: "my-1" }),
-                    _cache[90] || (_cache[90] = _createElementVNode("div", { class: "text-subtitle-2 font-weight-bold" }, "媒体库访问范围", -1)),
+                    _cache[92] || (_cache[92] = _createElementVNode("div", { class: "text-subtitle-2 font-weight-bold" }, "媒体库访问范围", -1)),
                     _createVNode(_component_v_switch, {
                       modelValue: editForm.enable_all_folders,
                       "onUpdate:modelValue": _cache[36] || (_cache[36] = ($event) => editForm.enable_all_folders = $event),
@@ -1683,8 +1700,8 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       class: "pa-3"
                     }, {
                       default: _withCtx(() => [
-                        _cache[88] || (_cache[88] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mb-2" }, "勾选允许访问的媒体库：", -1)),
-                        editServerFolders.value.length === 0 ? (_openBlock(), _createElementBlock("div", _hoisted_52, " 未读取到媒体库文件夹列表 ")) : (_openBlock(), _createBlock(_component_v_row, {
+                        _cache[90] || (_cache[90] = _createElementVNode("div", { class: "text-caption text-medium-emphasis mb-2" }, "勾选允许访问的媒体库：", -1)),
+                        editServerFolders.value.length === 0 ? (_openBlock(), _createElementBlock("div", _hoisted_57, " 未读取到媒体库文件夹列表 ")) : (_openBlock(), _createBlock(_component_v_row, {
                           key: 1,
                           dense: ""
                         }, {
@@ -1724,7 +1741,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       variant: "text",
                       onClick: _cache[38] || (_cache[38] = ($event) => editDialog.value = false)
                     }, {
-                      default: _withCtx(() => [..._cache[91] || (_cache[91] = [
+                      default: _withCtx(() => [..._cache[93] || (_cache[93] = [
                         _createTextVNode("取消", -1)
                       ])]),
                       _: 1
@@ -1735,7 +1752,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       loading: savingEdit.value,
                       onClick: submitEditUser
                     }, {
-                      default: _withCtx(() => [..._cache[92] || (_cache[92] = [
+                      default: _withCtx(() => [..._cache[94] || (_cache[94] = [
                         _createTextVNode(" 保存修改 ", -1)
                       ])]),
                       _: 1
@@ -1759,7 +1776,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
               default: _withCtx(() => [
                 _createVNode(_component_v_card_title, { class: "emby-dialog__title d-flex align-center justify-space-between" }, {
                   default: _withCtx(() => [
-                    _cache[93] || (_cache[93] = _createElementVNode("span", null, "MoviePilot 登录准入策略设置", -1)),
+                    _cache[95] || (_cache[95] = _createElementVNode("span", null, "MoviePilot 登录准入策略设置", -1)),
                     _createVNode(_component_v_btn, {
                       icon: "mdi-close",
                       variant: "text",
@@ -1772,12 +1789,12 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                 _createVNode(_component_v_divider),
                 _createVNode(_component_v_card_text, { class: "emby-dialog__content d-flex flex-column gap-3" }, {
                   default: _withCtx(() => [
-                    _createElementVNode("div", _hoisted_53, [
+                    _createElementVNode("div", _hoisted_58, [
                       _createVNode(_component_v_icon, {
                         icon: "mdi-information-outline",
                         size: "18"
                       }),
-                      _cache[94] || (_cache[94] = _createElementVNode("div", null, [
+                      _cache[96] || (_cache[96] = _createElementVNode("div", null, [
                         _createElementVNode("strong", null, "名单仅控制 MoviePilot 登录，不影响 Emby 媒体库权限。"),
                         _createElementVNode("span", null, "全部模式不读取名单；白名单仅放行；黑名单仅拦截。禁用插件后不再执行名单准入。")
                       ], -1))
@@ -1846,7 +1863,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       variant: "text",
                       onClick: _cache[47] || (_cache[47] = ($event) => settingsDialog.value = false)
                     }, {
-                      default: _withCtx(() => [..._cache[95] || (_cache[95] = [
+                      default: _withCtx(() => [..._cache[97] || (_cache[97] = [
                         _createTextVNode("取消", -1)
                       ])]),
                       _: 1
@@ -1857,7 +1874,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       loading: savingConfig.value,
                       onClick: savePolicyConfig
                     }, {
-                      default: _withCtx(() => [..._cache[96] || (_cache[96] = [
+                      default: _withCtx(() => [..._cache[98] || (_cache[98] = [
                         _createTextVNode(" 保存设置 ", -1)
                       ])]),
                       _: 1
@@ -1899,7 +1916,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       indeterminate: "",
                       color: "primary",
                       class: "mb-3"
-                    })) : userSubscribes.value.length === 0 ? (_openBlock(), _createElementBlock("div", _hoisted_54, " 该用户暂无订阅记录 ")) : (_openBlock(), _createBlock(_component_v_list, {
+                    })) : userSubscribes.value.length === 0 ? (_openBlock(), _createElementBlock("div", _hoisted_59, " 该用户暂无订阅记录 ")) : (_openBlock(), _createBlock(_component_v_list, {
                       key: 2,
                       lines: "two",
                       density: "comfortable"
@@ -1919,8 +1936,8 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                               _createVNode(_component_v_list_item_title, { class: "font-weight-medium" }, {
                                 default: _withCtx(() => [
                                   _createTextVNode(_toDisplayString(sub.name) + " ", 1),
-                                  sub.year ? (_openBlock(), _createElementBlock("span", _hoisted_55, "(" + _toDisplayString(sub.year) + ")", 1)) : _createCommentVNode("", true),
-                                  sub.season ? (_openBlock(), _createElementBlock("span", _hoisted_56, "S" + _toDisplayString(sub.season), 1)) : _createCommentVNode("", true)
+                                  sub.year ? (_openBlock(), _createElementBlock("span", _hoisted_60, "(" + _toDisplayString(sub.year) + ")", 1)) : _createCommentVNode("", true),
+                                  sub.season ? (_openBlock(), _createElementBlock("span", _hoisted_61, "S" + _toDisplayString(sub.season), 1)) : _createCommentVNode("", true)
                                 ]),
                                 _: 2
                               }, 1024),
@@ -1963,10 +1980,10 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                 _createVNode(_component_v_divider),
                 _createVNode(_component_v_card_text, { class: "emby-dialog__content d-flex flex-column gap-2 pt-4" }, {
                   default: _withCtx(() => [
-                    _createElementVNode("div", _hoisted_57, [
-                      _cache[97] || (_cache[97] = _createTextVNode(" 请选择要对用户 ", -1)),
+                    _createElementVNode("div", _hoisted_62, [
+                      _cache[99] || (_cache[99] = _createTextVNode(" 请选择要对用户 ", -1)),
                       _createElementVNode("strong", null, _toDisplayString(deleteTargetUser.value?.username), 1),
-                      _cache[98] || (_cache[98] = _createTextVNode(" 执行的清理范围： ", -1))
+                      _cache[100] || (_cache[100] = _createTextVNode(" 执行的清理范围： ", -1))
                     ]),
                     deleteTargetUser.value && deleteTargetUser.value.emby_servers.length > 0 ? (_openBlock(), _createBlock(_component_v_checkbox, {
                       key: 0,
@@ -2002,7 +2019,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       variant: "text",
                       onClick: _cache[54] || (_cache[54] = ($event) => deleteDialog.value = false)
                     }, {
-                      default: _withCtx(() => [..._cache[99] || (_cache[99] = [
+                      default: _withCtx(() => [..._cache[101] || (_cache[101] = [
                         _createTextVNode("取消", -1)
                       ])]),
                       _: 1
@@ -2013,7 +2030,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       loading: deletingUser.value,
                       onClick: confirmDeleteUser
                     }, {
-                      default: _withCtx(() => [..._cache[100] || (_cache[100] = [
+                      default: _withCtx(() => [..._cache[102] || (_cache[102] = [
                         _createTextVNode(" 确认删除 ", -1)
                       ])]),
                       _: 1
@@ -2040,6 +2057,6 @@ const _export_sfc = (sfc, props) => {
   return target;
 };
 
-const AppPage = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-b8a3da82"]]);
+const AppPage = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-e957aaaf"]]);
 
 export { AppPage as default };
