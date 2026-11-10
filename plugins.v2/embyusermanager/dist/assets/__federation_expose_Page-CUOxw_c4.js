@@ -1,5 +1,5 @@
 import { importShared } from './__federation_fn_import-JrT3xvdd.js';
-import { _ as _sfc_main$1 } from './AppPage.vue_vue_type_script_setup_true_lang-Bhh6VCTT.js';
+import AppPage from './__federation_expose_AppPage-BSVVC02I.js';
 
 const {defineComponent:_defineComponent} = await importShared('vue');
 
@@ -21,7 +21,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
     const props = __props;
     const emit = __emit;
     return (_ctx, _cache) => {
-      return _openBlock(), _createBlock(_sfc_main$1, {
+      return _openBlock(), _createBlock(AppPage, {
         api: props.api,
         "plugin-id": props.pluginId,
         onAction: _cache[0] || (_cache[0] = ($event) => emit("action")),
