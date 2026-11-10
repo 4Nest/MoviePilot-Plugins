@@ -1,5 +1,5 @@
 import { importShared } from './__federation_fn_import-JrT3xvdd.js';
-import { _ as _sfc_main$1 } from './AppPage.vue_vue_type_script_setup_true_lang-C0oyZlmf.js';
+import { _ as _sfc_main$1 } from './AppPage.vue_vue_type_script_setup_true_lang-Bhh6VCTT.js';
 
 const {defineComponent:_defineComponent} = await importShared('vue');
 

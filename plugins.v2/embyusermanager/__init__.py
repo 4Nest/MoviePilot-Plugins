@@ -132,7 +132,7 @@ class EmbyUserManager(_PluginBase):
     plugin_name = "Emby用户管理"
     plugin_desc = "管理Emby媒体服务器账号增删改查、MoviePilot登录准入、黑白名单及订阅数据。"
     plugin_icon = "emby.png"
-    plugin_version = "1.1.0"
+    plugin_version = "1.1.1"
     plugin_author = "4Nest"
     author_url = "https://github.com/4Nest"
     plugin_config_prefix = "embyusermanager_"
@@ -682,7 +682,12 @@ class EmbyUserManager(_PluginBase):
             return schemas.Response(success=False, message="当前 Emby 模块不支持创建用户")
 
         password = data.get("password")
-        password_str = str(password) if password is not None and str(password) != "" else None
+        generated_password = not str(password or "").strip()
+        password_str = (
+            str(password).strip()
+            if not generated_password
+            else secrets.token_urlsafe(12)
+        )
         copy_from_user_id = str(data.get("copy_from_user_id") or "").strip() or None
         policy_updates = _build_policy_updates_from_payload(data)
 
@@ -715,6 +720,8 @@ class EmbyUserManager(_PluginBase):
                 "server": resolved_server,
                 "user_id": str((created_user or {}).get("Id") or ""),
                 "username": username,
+                "password": password_str,
+                "generated_password": generated_password,
             },
         )
 

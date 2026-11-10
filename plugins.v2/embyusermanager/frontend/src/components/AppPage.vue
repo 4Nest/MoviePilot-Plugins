@@ -138,6 +138,7 @@ const blacklistInput = ref('')
 const createDialog = ref(false)
 const creatingUser = ref(false)
 const showCreatePassword = ref(false)
+const createdCredential = ref<{ username: string; password: string } | null>(null)
 const createForm = reactive({
   server: '',
   username: '',
@@ -325,6 +326,7 @@ function openCreateDialog() {
   createForm.simultaneous_stream_limit = 0
   createForm.add_to_whitelist = config.value.allow_mode === 'whitelist'
   showCreatePassword.value = false
+  createdCredential.value = null
   createDialog.value = true
 }
 
@@ -360,7 +362,14 @@ async function submitCreateUser() {
     const res = await props.api.post(`plugin/${resolvedPluginId.value}/emby/user/create`, payload)
     if (res?.success) {
       notifySuccess(res.message || '创建 Emby 账号成功')
-      createDialog.value = false
+      if (res.data?.generated_password && res.data?.password) {
+        createdCredential.value = {
+          username: res.data.username,
+          password: res.data.password,
+        }
+      } else {
+        createDialog.value = false
+      }
       await fetchOverview()
     } else {
       notifyError(res?.message || '创建 Emby 账号失败')
@@ -897,7 +906,7 @@ onMounted(() => {
           <v-btn icon="mdi-close" variant="text" size="small" @click="createDialog = false" />
         </v-card-title>
         <v-divider />
-        <v-card-text class="d-flex flex-column gap-3 pt-4">
+        <v-card-text v-if="!createdCredential" class="d-flex flex-column gap-3 pt-4">
           <v-select
             v-if="servers.length > 1"
             v-model="createForm.server"
@@ -923,7 +932,7 @@ onMounted(() => {
               <v-text-field
                 v-model="createForm.password"
                 :type="showCreatePassword ? 'text' : 'password'"
-                label="初始密码（留空则免密）"
+                label="初始密码（留空则随机生成）"
                 variant="outlined"
                 density="compact"
                 hide-details
@@ -1051,12 +1060,30 @@ onMounted(() => {
             hide-details
           />
         </v-card-text>
+        <v-card-text v-else class="pt-4">
+          <v-alert type="success" variant="tonal" icon="mdi-key-check-outline">
+            <template #title>账号 {{ createdCredential.username }} 创建成功</template>
+            <div class="mb-3">初始密码已随机生成，请立即复制并妥善保管：</div>
+            <v-text-field
+              :model-value="createdCredential.password"
+              label="随机生成的初始密码"
+              readonly
+              variant="outlined"
+              density="compact"
+              append-inner-icon="mdi-content-copy"
+              @click:append-inner="navigator.clipboard?.writeText(createdCredential?.password || '')"
+            />
+          </v-alert>
+        </v-card-text>
         <v-divider />
         <v-card-actions class="justify-end pa-4">
-          <v-btn variant="text" @click="createDialog = false">取消</v-btn>
-          <v-btn color="primary" variant="flat" :loading="creatingUser" @click="submitCreateUser">
-            创建账号
-          </v-btn>
+          <template v-if="!createdCredential">
+            <v-btn variant="text" @click="createDialog = false">取消</v-btn>
+            <v-btn color="primary" variant="flat" :loading="creatingUser" @click="submitCreateUser">
+              创建账号
+            </v-btn>
+          </template>
+          <v-btn v-else color="primary" variant="flat" @click="createDialog = false">完成</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
