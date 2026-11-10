@@ -1,20 +1,29 @@
 {
-    "bilibilinotify": {
-        "name": "Bilibili番剧更新通知",
-        "description": "监控Bilibili番剧更新，当有新番剧更新时发送通知。",
-        "labels": "通知,Bilibili",
-        "version": "1.0",
-        "icon": "Bilibili_A.png",
-        "author": "NEST",
-        "level": 1
-    },
-    "MediaCoverGenerator": {
-        "name": "媒体库封面生成（自用版）",
-        "description": "生成媒体库动态/静态封面，支持 Emby/Jellyfin",
-        "labels": "Emby,动态封面,媒体库",
-        "version": "0.9.6",
-        "icon": "emby.png",
-        "author": "justzerock,4Nest",
-        "level": 1
-    }
+  "bilibilinotify": {
+    "name": "Bilibili番剧更新通知",
+    "description": "监控Bilibili番剧更新，当有新番剧更新时发送通知。",
+    "labels": "通知,Bilibili",
+    "version": "1.0",
+    "icon": "Bilibili_A.png",
+    "author": "NEST",
+    "level": 1
+  },
+  "MediaCoverGenerator": {
+    "name": "媒体库封面生成（自用版）",
+    "description": "生成媒体库动态/静态封面，支持 Emby/Jellyfin",
+    "labels": "Emby,动态封面,媒体库",
+    "version": "0.9.6",
+    "icon": "emby.png",
+    "author": "justzerock,4Nest",
+    "level": 1
+  },
+  "EmbyUserManager": {
+    "name": "Emby用户管理",
+    "description": "管理Emby媒体服务器用户的MoviePilot登录准入、黑白名单及订阅数据。",
+    "labels": "Emby,用户管理,订阅",
+    "version": "1.0.0",
+    "icon": "emby.png",
+    "author": "4Nest",
+    "level": 1
+  }
 }
