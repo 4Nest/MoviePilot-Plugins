@@ -16,6 +16,8 @@
 |------|------|------|
 | [媒体库封面生成](plugins.v2/mediacovergenerator) | v0.9.6 | 为 Emby/Jellyfin 媒体库生成动态/静态封面，支持 8 种风格、自定义字体与标题 |
 | [Bilibili 番剧更新通知](plugins.v2/bilibilinotify) | v1.0 | 监控 Bilibili 番剧更新，新番上线时推送通知 |
+| [Emby 用户管理](plugins.v2/embyusermanager) | v1.2.1 | 管理 Emby 媒体服务器账号增删改查、登录准入黑白名单及用户订阅数据 |
+| [保种删种管家](plugins.v2/seedcleaner) | v1.0.0 | 多维条件与正则清理规则、模拟干跑预览、磁盘低水位应急保盘，支持 qBittorrent 与 Transmission |
 
 ---
 

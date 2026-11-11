@@ -1,0 +1,11 @@
+
+.seed-config[data-v-435796f1] { color: rgb(var(--v-theme-on-surface));
+}
+.section-title[data-v-435796f1] { display: flex; align-items: center; gap: 8px; font-weight: 600; margin-bottom: 14px; color: rgb(var(--v-theme-primary));
+}
+.sticky-actions[data-v-435796f1] { position: sticky; bottom: 0; z-index: 2; display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; padding: 12px 0 4px; background: linear-gradient(transparent, rgb(var(--v-theme-background)) 24%);
+}
+.disabled-section[data-v-435796f1] { opacity: .55; pointer-events: none;
+}
+.flex-1-1[data-v-435796f1] { flex: 1 1 0;
+}

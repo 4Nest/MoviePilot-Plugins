@@ -25,5 +25,17 @@
     "icon": "emby.png",
     "author": "4Nest",
     "level": 1
+  },
+  "SeedCleaner": {
+    "name": "保种删种管家",
+    "description": "多维条件与正则清理规则、模拟干跑、磁盘低水位应急保盘，支持 qBittorrent 与 Transmission。",
+    "labels": "下载器,保种,清理",
+    "version": "1.0.0",
+    "icon": "clean.png",
+    "author": "4Nest",
+    "level": 1,
+    "history": {
+      "v1.0.0": "初始版本：有序清理规则、正则在线测试、干跑预览、清理历史与磁盘低水位应急保盘。"
+    }
   }
 }
