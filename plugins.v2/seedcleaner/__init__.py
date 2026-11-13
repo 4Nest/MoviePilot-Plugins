@@ -128,7 +128,7 @@ class SeedCleaner(_PluginBase):
     plugin_name = "保种删种管家"
     plugin_desc = "多维条件与正则清理规则、模拟干跑、磁盘低水位应急保盘，支持 qBittorrent 与 Transmission。"
     plugin_icon = "clean.png"
-    plugin_version = "1.0.0"
+    plugin_version = "1.1.0"
     plugin_author = "4Nest"
     author_url = "https://github.com/4Nest"
     plugin_label = "下载器,保种,清理"
