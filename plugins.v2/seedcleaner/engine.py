@@ -2,12 +2,45 @@
 import re
 import time
 from dataclasses import asdict, dataclass, fields
-from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
-from urllib.parse import urlparse
+from pathlib import PurePosixPath
+from typing import Any, Callable, Dict, Iterable, List, Optional, Pattern, Tuple
 
 
 GIB = 1024**3
 DISK_GUARD_RULE_ID = "__disk_guard__"
+_RULE_REGEX_FIELD_NAMES: Tuple[str, ...] = (
+    "name_regex",
+    "exclude_name_regex",
+    "save_path_regex",
+    "exclude_save_path_regex",
+    "tracker_regex",
+    "exclude_tracker_regex",
+    "tracker_msg_regex",
+    "category_regex",
+    "tag_regex",
+    "exclude_tag_regex",
+)
+
+
+def _normalize_path(raw_path: Any) -> str:
+    """将任意路径字符串规范化为无末尾斜杠的 POSIX 路径（根目录保留 '/'）。"""
+    text = str(raw_path or "").strip()
+    if not text:
+        return ""
+    posix_text = PurePosixPath(text.replace("\\", "/")).as_posix()
+    if posix_text == ".":
+        return ""
+    return posix_text if posix_text == "/" else posix_text.rstrip("/")
+
+
+def _compile_regex_cached(pattern: str) -> Tuple[str, Optional[Pattern[str]], Optional[str]]:
+    """编译大小写不敏感正则表达式并返回 (原始表达式, Pattern, 错误信息) 三元组。"""
+    if not pattern:
+        return ("", None, None)
+    try:
+        return (pattern, re.compile(pattern, re.IGNORECASE), None)
+    except re.error as err:
+        return (pattern, None, str(err))
 
 
 def _string_list(values: Any) -> List[str]:
@@ -96,6 +129,7 @@ class NormalizedTorrent:
     tracker: str
     tracker_msg: str
     is_transferred: bool
+    content_path: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         """转换为可供 REST API 返回的字典。"""
@@ -135,10 +169,29 @@ class CleanRule:
     max_upspeed_kbps: Optional[float] = None
 
     def __post_init__(self) -> None:
-        """规范化规则集合字段与枚举值。"""
+        """规范化规则集合字段与枚举值，并预编译缓存所有正则表达式。"""
         self.downloaders = _string_list(self.downloaders)
         self.states = [state.lower() for state in _string_list(self.states)]
         self.metric_logic = "any" if str(self.metric_logic).lower() == "any" else "all"
+        self._regex_cache: Dict[str, Tuple[str, Optional[Pattern[str]], Optional[str]]] = {}
+        for field_name in _RULE_REGEX_FIELD_NAMES:
+            pattern = str(getattr(self, field_name) or "")
+            self._regex_cache[field_name] = _compile_regex_cached(pattern)
+
+    def compiled_regex(self, field_name: str) -> Tuple[Optional[Pattern[str]], Optional[str]]:
+        """获取指定字段预编译后的正则表达式与错误信息，若字段被动态修改则自动同步缓存。"""
+        pattern = str(getattr(self, field_name) or "")
+        if not pattern:
+            return None, None
+        cache = getattr(self, "_regex_cache", None)
+        if cache is None:
+            cache = {}
+            self._regex_cache = cache
+        cached = cache.get(field_name)
+        if cached is None or cached[0] != pattern:
+            cached = _compile_regex_cached(pattern)
+            cache[field_name] = cached
+        return cached[1], cached[2]
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "CleanRule":
@@ -172,22 +225,20 @@ class CleanRule:
         return cls(**values)
 
     def to_dict(self) -> Dict[str, Any]:
-        """转换为可持久化的规则字典。"""
-        return asdict(self)
+        """转换为可持久化的规则字典（不包含预编译正则缓存对象）。"""
+        result: Dict[str, Any] = {}
+        for field in fields(self):
+            val = getattr(self, field.name)
+            result[field.name] = list(val) if isinstance(val, list) else val
+        return result
 
     def regex_errors(self) -> List[str]:
-        """检查全部正则表达式并返回可读错误，不抛出编译异常。"""
+        """检查全部正则表达式并返回可读错误，复用预编译缓存不抛出异常。"""
         errors: List[str] = []
-        for field in fields(self):
-            if not field.name.endswith("regex"):
-                continue
-            pattern = str(getattr(self, field.name) or "")
-            if not pattern:
-                continue
-            try:
-                re.compile(pattern, re.IGNORECASE)
-            except re.error as err:
-                errors.append(f"规则「{self.name}」字段 {field.name} 非法正则：{err}")
+        for field_name in _RULE_REGEX_FIELD_NAMES:
+            _, err = self.compiled_regex(field_name)
+            if err is not None:
+                errors.append(f"规则「{self.name}」字段 {field_name} 非法正则：{err}")
         return errors
 
 
@@ -261,7 +312,7 @@ class CleanEngine:
     )
 
     def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
-        """保存全局保护配置并预解析规则列表。"""
+        """保存全局保护配置并预编译全局排除正则与规则列表。"""
         self.config = config or {}
         self.protect_tags = {
             tag.casefold()
@@ -270,7 +321,24 @@ class CleanEngine:
             )
         }
         self.global_exclude_regex = str(self.config.get("global_exclude_regex") or "")
+        self._global_exclude_cache: Tuple[str, Optional[Pattern[str]], Optional[str]] = (
+            _compile_regex_cached(self.global_exclude_regex)
+        )
         self.only_completed = _boolean(self.config.get("only_completed"), True)
+        self._rules: List[CleanRule] = [
+            CleanRule.from_dict(item)
+            for item in self.config.get("rules", [])
+            if isinstance(item, dict)
+        ]
+
+    def _get_global_exclude_compiled(self) -> Tuple[Optional[Pattern[str]], Optional[str]]:
+        """获取预编译的全局排除正则及其错误状态。"""
+        pattern = str(self.global_exclude_regex or "")
+        if not pattern:
+            return None, None
+        if self._global_exclude_cache[0] != pattern:
+            self._global_exclude_cache = _compile_regex_cached(pattern)
+        return self._global_exclude_cache[1], self._global_exclude_cache[2]
 
     @staticmethod
     def _normalize_state(raw_state: Any, error: Any = None, error_msg: Any = None) -> str:
@@ -348,6 +416,20 @@ class CleanEngine:
             tracker = f"https://{tracker}"
         return tracker, " | ".join(dict.fromkeys(messages))
 
+    @staticmethod
+    def _extract_content_path(raw: Any, save_path: str, name: str) -> str:
+        """提取种子的真实内容路径，绝不回退为公共分类保存父目录 save_path。"""
+        norm_save = _normalize_path(save_path)
+        raw_content = _normalize_path(_value(raw, "content_path", "contentPath", default=""))
+        if raw_content and raw_content != "/" and raw_content != norm_save:
+            return raw_content
+        clean_name = str(name or "").strip().strip("/\\")
+        if norm_save and clean_name:
+            combined = _normalize_path(f"{norm_save}/{clean_name}")
+            if combined and combined != "/" and combined != norm_save:
+                return combined
+        return ""
+
     def normalize_torrent(
         self,
         raw: Any,
@@ -355,13 +437,14 @@ class CleanEngine:
         transfer_checker: Optional[Callable[[str, str], bool]] = None,
         now: Optional[float] = None,
     ) -> NormalizedTorrent:
-        """归一化 qBittorrent/Transmission 种子，并计算入库安全锁。"""
+        """归一化 qBittorrent/Transmission 种子，并基于真实内容路径计算入库安全锁。"""
         current_time = time.time() if now is None else now
         torrent_hash = str(_value(raw, "hash", "hashString", "hash_string", default="") or "").lower()
         name = str(_value(raw, "name", default="") or "")
         save_path = str(
             _value(raw, "save_path", "downloadDir", "download_dir", "savePath", default="") or ""
         )
+        content_path = self._extract_content_path(raw, save_path, name)
         tags = _string_list(_value(raw, "tags", "labels", default=[]))
         progress = _number(_value(raw, "progress", "percentDone", "percent_done", default=0))
         if 0 <= progress <= 1:
@@ -385,7 +468,7 @@ class CleanEngine:
         transferred = any(tag.casefold() == "已整理".casefold() for tag in tags)
         if not transferred and transfer_checker:
             try:
-                transferred = bool(transfer_checker(torrent_hash, save_path))
+                transferred = bool(transfer_checker(torrent_hash, content_path))
             except Exception:
                 transferred = False
         return NormalizedTorrent(
@@ -410,27 +493,34 @@ class CleanEngine:
             tracker=tracker,
             tracker_msg=tracker_msg,
             is_transferred=transferred,
+            content_path=content_path,
         )
+
+    @staticmethod
+    def _compiled_match(compiled: Optional[Pattern[str]], value: Any) -> bool:
+        """使用已预编译的正则表达式匹配文本或标签列表。"""
+        if compiled is None:
+            return False
+        values = value if isinstance(value, list) else [value]
+        return any(compiled.search(str(item or "")) is not None for item in values)
 
     @staticmethod
     def _regex_match(pattern: str, value: Any) -> bool:
         """以大小写不敏感方式匹配文本或标签列表，非法表达式返回 False。"""
         if not pattern:
             return True
-        try:
-            compiled = re.compile(pattern, re.IGNORECASE)
-        except re.error:
-            return False
-        values = value if isinstance(value, list) else [value]
-        return any(compiled.search(str(item or "")) is not None for item in values)
+        _, compiled, _ = _compile_regex_cached(pattern)
+        return CleanEngine._compiled_match(compiled, value)
 
     def _global_protection_reason(self, torrent: NormalizedTorrent) -> str:
         """返回全局标签或名称排除原因，未保护时返回空字符串。"""
         protected = [tag for tag in torrent.tags if tag.casefold() in self.protect_tags]
         if protected:
             return f"命中全局保护标签：{', '.join(protected)}"
-        if self.global_exclude_regex and self._regex_match(self.global_exclude_regex, torrent.name):
-            return "命中全局排除名称正则"
+        if self.global_exclude_regex:
+            compiled, _ = self._get_global_exclude_compiled()
+            if self._compiled_match(compiled, torrent.name):
+                return "命中全局排除名称正则"
         return ""
 
     def match_rule(self, torrent: NormalizedTorrent, rule: CleanRule) -> Tuple[bool, List[str]]:
@@ -456,8 +546,9 @@ class CleanEngine:
             pattern = str(getattr(rule, field_name) or "")
             if not pattern:
                 continue
+            compiled, _ = rule.compiled_regex(field_name)
             value = getattr(torrent, attribute)
-            matched = self._regex_match(pattern, value)
+            matched = self._compiled_match(compiled, value)
             if field_name.startswith("exclude_"):
                 if matched:
                     return False, []
@@ -467,7 +558,8 @@ class CleanEngine:
                     return False, []
                 reasons.append(f"{label}匹配 {pattern}")
         if rule.tag_regex:
-            if not self._regex_match(rule.tag_regex, torrent.tags):
+            compiled_tag, _ = rule.compiled_regex("tag_regex")
+            if not self._compiled_match(compiled_tag, torrent.tags):
                 return False, []
             reasons.append(f"标签匹配 {rule.tag_regex}")
 
@@ -593,15 +685,12 @@ class CleanEngine:
         disk_guard: Optional[Dict[str, Any]] = None,
     ) -> CleanPlan:
         """生成跨下载器、去重且遵守规则顺序和单轮上限的清理计划。"""
-        rule_list = rules if rules is not None else [
-            CleanRule.from_dict(item) for item in self.config.get("rules", []) if isinstance(item, dict)
-        ]
+        rule_list = rules if rules is not None else self._rules
         errors: List[str] = []
         if self.global_exclude_regex:
-            try:
-                re.compile(self.global_exclude_regex, re.IGNORECASE)
-            except re.error as err:
-                errors.append(f"全局排除名称非法正则：{err}")
+            _, global_err = self._get_global_exclude_compiled()
+            if global_err is not None:
+                errors.append(f"全局排除名称非法正则：{global_err}")
         for rule in rule_list:
             if rule.enabled:
                 errors.extend(rule.regex_errors())

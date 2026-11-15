@@ -58,7 +58,7 @@ class MediaCoverGenerator(_PluginBase):
     # 插件作者
     plugin_author = "justzerock,4Nest"
     # 作者主页
-    author_url = "https://github.com/4Nest/MoviePilot-Plugins"
+    author_url = "https://github.com/4Nest"
     # 插件配置项ID前缀
     plugin_config_prefix = "mediacovergenerator_"
     # 加载顺序

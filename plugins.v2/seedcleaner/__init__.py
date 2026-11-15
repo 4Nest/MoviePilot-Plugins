@@ -3,21 +3,25 @@ import copy
 import re
 import threading
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from pathlib import Path, PurePosixPath
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from fastapi import Body, Depends
 
 from app import schemas
+from app.db.models.transferhistory import TransferHistory
 from app.db.models.user import User
 from app.db.transferhistory_oper import TransferHistoryOper
 from app.db.user_oper import get_current_admin
 from app.helper.downloader import DownloaderHelper
 from app.log import logger
 from app.plugins import _PluginBase
-from app.plugins.seedcleaner.engine import CleanEngine, CleanRule, GIB
+from app.plugins.seedcleaner.engine import CleanEngine, CleanRule, GIB, _normalize_path, _value
 from app.schemas.types import NotificationType
 from app.utils.system import SystemUtils
+
+MAX_REGEX_PATTERN_LENGTH = 512
+MAX_REGEX_TEXT_LENGTH = 4096
 
 
 DEFAULT_CONFIG: Dict[str, Any] = {
@@ -128,7 +132,7 @@ class SeedCleaner(_PluginBase):
     plugin_name = "保种删种管家"
     plugin_desc = "多维条件与正则清理规则、模拟干跑、磁盘低水位应急保盘，支持 qBittorrent 与 Transmission。"
     plugin_icon = "clean.png"
-    plugin_version = "1.1.0"
+    plugin_version = "1.1.1"
     plugin_author = "4Nest"
     author_url = "https://github.com/4Nest"
     plugin_label = "下载器,保种,清理"
@@ -324,25 +328,107 @@ class SeedCleaner(_PluginBase):
             logger.warning(f"计算下载目录剩余空间失败：{err}")
             return None, None
 
-    def _is_transferred(self, torrent_hash: str, save_path: str) -> bool:
-        """通过成功整理历史的 Hash 或精确保存路径判定入库安全锁。"""
+    def _load_transferred_index(self) -> Tuple[Set[str], Set[str], Set[str]]:
+        """通过单次数据库会话批量读取成功整理记录，构建 Hash 与内容路径前缀索引。"""
+        hashes: Set[str] = set()
+        exact_srcs: Set[str] = set()
+        ancestor_dirs: Set[str] = set()
+
+        db = getattr(self._transfer_oper, "_db", None)
+        close_session = False
+        session = db
+        if session is None or not hasattr(session, "query"):
+            from app.db import ScopedSession
+
+            session = ScopedSession()
+            close_session = True
         try:
-            if torrent_hash:
-                histories = self._transfer_oper.list_by_hash(torrent_hash) or []
-                if any(bool(getattr(item, "status", False)) for item in histories):
-                    return True
-            if save_path:
-                return bool(
-                    self._transfer_oper.list_success_by_src(
-                        src=save_path, recursive=False
-                    )
-                    or []
-                )
-        except Exception as err:
-            logger.warning(f"查询种子整理历史失败 ({torrent_hash})：{err}")
+            rows = (
+                session.query(TransferHistory.download_hash, TransferHistory.src)
+                .filter(TransferHistory.status.is_(True))
+                .all()
+                or []
+            )
+        finally:
+            if close_session:
+                session.close()
+
+        for raw_hash, raw_src in rows:
+            norm_hash = str(raw_hash or "").strip().lower()
+            if norm_hash:
+                hashes.add(norm_hash)
+            norm_src = _normalize_path(raw_src)
+            if norm_src and norm_src != "/":
+                exact_srcs.add(norm_src)
+                parent = PurePosixPath(norm_src).parent.as_posix()
+                while parent and parent not in {"/", "."}:
+                    if parent in ancestor_dirs:
+                        break
+                    ancestor_dirs.add(parent)
+                    parent = PurePosixPath(parent).parent.as_posix()
+
+        return hashes, exact_srcs, ancestor_dirs
+
+    @staticmethod
+    def _match_transferred_index(
+        torrent_hash: str,
+        content_path: str,
+        index: Tuple[Set[str], Set[str], Set[str]],
+        excluded_save_dirs: Optional[Set[str]] = None,
+    ) -> bool:
+        """在预加载的内存索引中校验种子 Hash 或真实内容路径（单文件相等 / 目录前缀）。"""
+        hashes, exact_srcs, ancestor_dirs = index
+        norm_hash = str(torrent_hash or "").strip().lower()
+        if norm_hash and norm_hash in hashes:
+            return True
+        norm_content = _normalize_path(content_path)
+        if norm_content and norm_content != "/":
+            if norm_content in exact_srcs:
+                return True
+            if norm_content in ancestor_dirs and (
+                not excluded_save_dirs or norm_content not in excluded_save_dirs
+            ):
+                return True
         return False
 
-    def _collect_snapshots(self) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any], List[str]]:
+    def _make_batch_transfer_checker(
+        self, excluded_save_dirs: Optional[Set[str]] = None
+    ) -> Callable[[str, str], bool]:
+        """构造按需单次批量查库的入库校验闭包，消除 N+1 会话开销。"""
+        loaded = False
+        cached_index: Tuple[Set[str], Set[str], Set[str]] = (set(), set(), set())
+
+        def _check(torrent_hash: str, content_path: str) -> bool:
+            nonlocal loaded, cached_index
+            if not torrent_hash and not content_path:
+                return False
+            if not loaded:
+                loaded = True
+                try:
+                    cached_index = self._load_transferred_index()
+                except Exception as err:
+                    logger.warning(f"批量查询种子整理历史失败：{err}")
+                    cached_index = (set(), set(), set())
+            return self._match_transferred_index(
+                torrent_hash, content_path, cached_index, excluded_save_dirs
+            )
+
+        return _check
+
+    def _is_transferred(self, torrent_hash: str, content_path: str) -> bool:
+        """通过成功整理历史的 Hash 或精确内容路径/子文件前缀判定入库安全锁。"""
+        if not torrent_hash and not content_path:
+            return False
+        try:
+            index = self._load_transferred_index()
+            return self._match_transferred_index(torrent_hash, content_path, index)
+        except Exception as err:
+            logger.warning(f"查询种子整理历史失败 ({torrent_hash})：{err}")
+            return False
+
+    def _collect_snapshots(
+        self, check_transferred: bool = True
+    ) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, Any], List[str]]:
         """采集所有已配置 qBittorrent/Transmission 的种子与磁盘快照。"""
         snapshots: Dict[str, Dict[str, Any]] = {}
         instances: Dict[str, Any] = {}
@@ -352,6 +438,8 @@ class SeedCleaner(_PluginBase):
         except Exception as err:
             return {}, {}, [f"获取下载器列表失败：{err}"]
         engine = CleanEngine(self._config)
+        active_save_dirs: Set[str] = set()
+        fetched_batches: List[Tuple[str, str, Any, List[Any]]] = []
         for name, service in services.items():
             service_type = str(getattr(service, "type", "") or "").lower()
             instance = getattr(service, "instance", None)
@@ -368,9 +456,27 @@ class SeedCleaner(_PluginBase):
                 if has_error:
                     errors.append(f"下载器 {name} 获取种子失败")
                     continue
+                raw_list = list(raw_torrents or [])
+                if check_transferred:
+                    for raw in raw_list:
+                        norm_save = _normalize_path(
+                            _value(raw, "save_path", "downloadDir", "download_dir", default="")
+                        )
+                        if norm_save and norm_save != "/":
+                            active_save_dirs.add(norm_save)
+                fetched_batches.append((name, service_type, instance, raw_list))
+            except Exception as err:
+                logger.error(f"保种管家采集下载器 {name} 失败：{err}")
+                errors.append(f"下载器 {name} 采集失败：{err}")
+
+        transfer_checker = (
+            self._make_batch_transfer_checker(active_save_dirs) if check_transferred else None
+        )
+        for name, service_type, instance, raw_list in fetched_batches:
+            try:
                 torrents = [
-                    engine.normalize_torrent(raw, name, self._is_transferred)
-                    for raw in raw_torrents or []
+                    engine.normalize_torrent(raw, name, transfer_checker)
+                    for raw in raw_list
                 ]
                 info = self._transfer_info(instance)
                 free_space, total_space = self._disk_space(
@@ -427,8 +533,8 @@ class SeedCleaner(_PluginBase):
         return items
 
     def api_overview(self, _: User = Depends(get_current_admin)) -> schemas.Response:
-        """返回下载器实时磁盘空间、速度和做种统计。"""
-        snapshots, _, errors = self._collect_snapshots()
+        """返回下载器实时磁盘空间、速度和做种统计（不查询整理历史数据库）。"""
+        snapshots, _, errors = self._collect_snapshots(check_transferred=False)
         guard = self._config.get("disk_guard", {})
         for snapshot in snapshots.values():
             snapshot["threshold_gb"] = guard.get("free_space_threshold_gb", 0)
@@ -602,17 +708,34 @@ class SeedCleaner(_PluginBase):
         payload: dict = Body(...),
         _: User = Depends(get_current_admin),
     ) -> schemas.Response:
-        """在线安全测试大小写不敏感正则并返回匹配片段与错误。"""
+        """在线安全测试大小写不敏感正则，限制输入长度并返回匹配片段与友好错误。"""
         pattern = str((payload or {}).get("pattern") or "")
         text = str((payload or {}).get("text") or "")
         if not pattern:
             return schemas.Response(success=False, message="请输入正则表达式")
+        if len(pattern) > MAX_REGEX_PATTERN_LENGTH:
+            msg = f"正则表达式长度不能超过 {MAX_REGEX_PATTERN_LENGTH} 个字符"
+            return schemas.Response(
+                success=False,
+                message=msg,
+                data={"valid": False, "matched": False, "error": msg},
+            )
+        if len(text) > MAX_REGEX_TEXT_LENGTH:
+            msg = f"测试样本文本长度不能超过 {MAX_REGEX_TEXT_LENGTH} 个字符"
+            return schemas.Response(
+                success=False,
+                message=msg,
+                data={"valid": False, "matched": False, "error": msg},
+            )
         try:
-            match = re.search(pattern, text, re.IGNORECASE)
+            compiled = re.compile(pattern, re.IGNORECASE)
+            match = compiled.search(text)
         except re.error as err:
+            friendly_err = f"正则表达式语法错误：{err}"
             return schemas.Response(
                 success=True,
-                data={"valid": False, "matched": False, "error": str(err)},
+                message=friendly_err,
+                data={"valid": False, "matched": False, "error": friendly_err},
             )
         return schemas.Response(
             success=True,

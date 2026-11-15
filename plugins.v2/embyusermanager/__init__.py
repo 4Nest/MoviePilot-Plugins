@@ -46,17 +46,67 @@ def _normalize_string_list(values: Any) -> List[str]:
 
 
 def _call_get_users(instance: Any, detailed: bool = True) -> List[dict]:
-    """安全调用 Emby 实例的 get_users 方法，兼容无参替身。"""
+    """安全调用 Emby 实例的 get_users 方法，兼容旧版无参签名并隔离运行时异常。"""
     get_users_fn = getattr(instance, "get_users", None)
     if not callable(get_users_fn):
         return []
+    supports_detailed = True
+    sig = None
     try:
         sig = inspect.signature(get_users_fn)
-        if "detailed" in sig.parameters:
-            return get_users_fn(detailed=detailed) or []
+        params = sig.parameters
+        supports_detailed = "detailed" in params or any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()
+        )
+    except (TypeError, ValueError):
+        supports_detailed = True
+
+    try:
+        if supports_detailed:
+            try:
+                return get_users_fn(detailed=detailed) or []
+            except TypeError as err:
+                # 仅当调用目标本身不接受 detailed 关键字参数时才回退无参调用
+                if sig is not None:
+                    try:
+                        sig.bind(detailed=detailed)
+                    except TypeError:
+                        return get_users_fn() or []
+                    logger.warning(f"获取 Emby 用户列表失败：{err}")
+                    return []
+                return get_users_fn() or []
         return get_users_fn() or []
-    except Exception:
-        return get_users_fn() or []
+    except Exception as err:
+        logger.warning(f"获取 Emby 用户列表失败：{err}")
+        return []
+
+
+def _query_by_username(model_cls: Any, db: Any, username: str) -> List[Any]:
+    """优先按 username 条件过滤查询 ORM 模型，兼容自定义查询方法与测试替身。"""
+    list_by_user_fn = getattr(model_cls, "list_by_username", None)
+    if callable(list_by_user_fn):
+        return list_by_user_fn(db, username) or []
+
+    username_col = getattr(model_cls, "username", None)
+    if username_col is not None and (hasattr(model_cls, "__table__") or hasattr(db, "query")):
+        close_session = False
+        session = db
+        if session is None or not hasattr(session, "query"):
+            from app.db import ScopedSession
+
+            session = ScopedSession()
+            close_session = True
+        try:
+            return session.query(model_cls).filter(username_col == username).all() or []
+        finally:
+            if close_session:
+                session.close()
+
+    return [
+        item
+        for item in (model_cls.list(db) or [])
+        if getattr(item, "username", None) == username
+    ]
 
 
 def _extract_server_folders(instance: Any) -> List[Dict[str, str]]:
@@ -132,7 +182,7 @@ class EmbyUserManager(_PluginBase):
     plugin_name = "Emby用户管理"
     plugin_desc = "管理Emby媒体服务器账号增删改查、MoviePilot登录准入、黑白名单及订阅数据。"
     plugin_icon = "emby.png"
-    plugin_version = "1.2.1"
+    plugin_version = "1.2.2"
     plugin_author = "4Nest"
     author_url = "https://github.com/4Nest"
     plugin_config_prefix = "embyusermanager_"
@@ -146,8 +196,19 @@ class EmbyUserManager(_PluginBase):
     _allowed_servers: List[str] = []
     _allow_emby_admin: bool = True
 
-    def init_plugin(self, config: dict = None):
-        """初始化并规范化插件配置。"""
+    def _export_config(self) -> Dict[str, Any]:
+        """导出当前内存中的规范化配置字典副本。"""
+        return {
+            "enabled": self._enabled,
+            "allow_mode": self._allow_mode,
+            "whitelist": list(self._whitelist),
+            "blacklist": list(self._blacklist),
+            "allowed_servers": list(self._allowed_servers),
+            "allow_emby_admin": self._allow_emby_admin,
+        }
+
+    def init_plugin(self, config: dict = None, *, persist: bool = False):
+        """初始化并规范化插件配置，确保内存与已持久化的系统配置保持一致。"""
         merged = dict(DEFAULT_CONFIG)
         if isinstance(config, dict):
             merged.update(config)
@@ -161,15 +222,14 @@ class EmbyUserManager(_PluginBase):
         self._allowed_servers = _normalize_string_list(merged.get("allowed_servers"))
         self._allow_emby_admin = bool(merged.get("allow_emby_admin", True))
 
-        normalized_config = {
-            "enabled": self._enabled,
-            "allow_mode": self._allow_mode,
-            "whitelist": self._whitelist,
-            "blacklist": self._blacklist,
-            "allowed_servers": self._allowed_servers,
-            "allow_emby_admin": self._allow_emby_admin,
-        }
-        if config != normalized_config:
+        normalized_config = self._export_config()
+        should_persist = persist or (config != normalized_config)
+        if not should_persist:
+            try:
+                should_persist = self.get_config() != normalized_config
+            except Exception:
+                should_persist = True
+        if should_persist:
             self.update_config(normalized_config)
 
     def get_state(self) -> bool:
@@ -361,15 +421,20 @@ class EmbyUserManager(_PluginBase):
             sub.update(sub_oper._db, {"username": new_name})
 
         try:
-            for hist in SubscribeHistory.list(db) or []:
-                if getattr(hist, "username", None) == old_name:
-                    hist.update(db, {"username": new_name})
+            for hist in _query_by_username(SubscribeHistory, db, old_name):
+                hist.update(db, {"username": new_name})
         except Exception as err:
             logger.warning(f"迁移用户订阅历史名称失败 ({old_name} -> {new_name})：{err}")
 
         try:
-            for conf in UserConfig.list(db) or []:
-                if getattr(conf, "username", None) == old_name:
+            existing_keys = {
+                getattr(conf, "key", None)
+                for conf in _query_by_username(UserConfig, db, new_name)
+            }
+            for conf in _query_by_username(UserConfig, db, old_name):
+                if getattr(conf, "key", None) in existing_keys:
+                    conf.delete(db, conf.id)
+                else:
                     conf.update(db, {"username": new_name})
         except Exception as err:
             logger.warning(f"迁移用户配置名称失败 ({old_name} -> {new_name})：{err}")
@@ -382,16 +447,7 @@ class EmbyUserManager(_PluginBase):
             self._blacklist = [new_name if x == old_name else x for x in self._blacklist]
             changed = True
         if changed:
-            self.init_plugin(
-                {
-                    "enabled": self._enabled,
-                    "allow_mode": self._allow_mode,
-                    "whitelist": self._whitelist,
-                    "blacklist": self._blacklist,
-                    "allowed_servers": self._allowed_servers,
-                    "allow_emby_admin": self._allow_emby_admin,
-                }
-            )
+            self.init_plugin(self._export_config(), persist=True)
 
     @eventmanager.register(ChainEventType.AuthIntercept)
     def handle_auth_intercept(self, event: Event):
@@ -701,17 +757,9 @@ class EmbyUserManager(_PluginBase):
             return schemas.Response(success=False, message=msg or "创建 Emby 用户失败")
 
         if bool(data.get("add_to_whitelist")) and username not in self._whitelist:
-            next_whitelist = [*self._whitelist, username]
-            self.init_plugin(
-                {
-                    "enabled": self._enabled,
-                    "allow_mode": self._allow_mode,
-                    "whitelist": next_whitelist,
-                    "blacklist": self._blacklist,
-                    "allowed_servers": self._allowed_servers,
-                    "allow_emby_admin": self._allow_emby_admin,
-                }
-            )
+            next_config = self._export_config()
+            next_config["whitelist"] = [*self._whitelist, username]
+            self.init_plugin(next_config, persist=True)
 
         return schemas.Response(
             success=True,
@@ -855,22 +903,18 @@ class EmbyUserManager(_PluginBase):
         else:
             target_list = [item for item in target_list if item != username]
 
-        new_config = {
-            "enabled": self._enabled,
-            "allow_mode": self._allow_mode,
-            "whitelist": target_list if list_type == "whitelist" else self._whitelist,
-            "blacklist": target_list if list_type == "blacklist" else self._blacklist,
-            "allowed_servers": self._allowed_servers,
-            "allow_emby_admin": self._allow_emby_admin,
-        }
-        self.init_plugin(new_config)
-        self.update_config(new_config)
+        new_config = self._export_config()
+        if list_type == "whitelist":
+            new_config["whitelist"] = target_list
+        else:
+            new_config["blacklist"] = target_list
+        self.init_plugin(new_config, persist=True)
         return schemas.Response(
             success=True,
             message="名单已更新",
             data={
-                "whitelist": self._whitelist,
-                "blacklist": self._blacklist,
+                "whitelist": list(self._whitelist),
+                "blacklist": list(self._blacklist),
             },
         )
 
@@ -880,18 +924,11 @@ class EmbyUserManager(_PluginBase):
         _: User = Depends(get_current_admin),
     ) -> schemas.Response:
         """保存并立即生效插件准入配置。"""
-        self.init_plugin(payload or {})
+        self.init_plugin(payload or {}, persist=True)
         return schemas.Response(
             success=True,
             message="准入配置已保存",
-            data={
-                "enabled": self._enabled,
-                "allow_mode": self._allow_mode,
-                "whitelist": self._whitelist,
-                "blacklist": self._blacklist,
-                "allowed_servers": self._allowed_servers,
-                "allow_emby_admin": self._allow_emby_admin,
-            },
+            data=self._export_config(),
         )
 
     def api_user_subscribes(
@@ -993,9 +1030,8 @@ class EmbyUserManager(_PluginBase):
 
         if delete_mp_user or delete_from_emby:
             try:
-                for item in UserConfig.list(user_oper._db) or []:
-                    if getattr(item, "username", None) == username:
-                        item.delete(user_oper._db, item.id)
+                for item in _query_by_username(UserConfig, user_oper._db, username):
+                    item.delete(user_oper._db, item.id)
             except Exception as err:
                 logger.warning(f"清理用户 {username} 配置记录失败：{err}")
 

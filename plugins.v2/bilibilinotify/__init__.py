@@ -9,6 +9,28 @@ from app.schemas import NotificationType
 from app.utils.http import RequestUtils
 
 
+MAX_HISTORY_SIZE = 200
+
+
+def _trim_history(items: Any, limit: int = MAX_HISTORY_SIZE) -> List[Any]:
+    """过滤空项、保持首次出现顺序去重，并截断保留最近 limit 条历史记录。"""
+    if not isinstance(items, list):
+        return []
+    deduped: List[Any] = []
+    seen = set()
+    for item in items:
+        if item is None or item == "":
+            continue
+        if item in seen:
+            deduped.remove(item)
+        else:
+            seen.add(item)
+        deduped.append(item)
+    if limit > 0 and len(deduped) > limit:
+        return deduped[-limit:]
+    return deduped
+
+
 class BilibiliNotify(_PluginBase):
     # 插件名称
     plugin_name = "Bilibili番剧更新通知"
@@ -17,11 +39,11 @@ class BilibiliNotify(_PluginBase):
     # 插件图标
     plugin_icon = "Bilibili_A.png"
     # 插件版本
-    plugin_version = "1.0"
+    plugin_version = "1.0.1"
     # 插件作者
     plugin_author = "NEST"
     # 作者主页
-    author_url = "https://github.com/4Nest/MoviePilot-Plugins"
+    author_url = "https://github.com/4Nest"
     # 插件配置项ID前缀
     plugin_config_prefix = "bilibilinotify_"
     # 加载顺序
@@ -29,21 +51,44 @@ class BilibiliNotify(_PluginBase):
     # 可使用的用户级别
     auth_level = 1
 
-    # 私有属性
+    # 私有属性默认值
     _enabled = False
     _notify = False
     _cron = None
     _daily_cron = None
     _new_cron = None
     _run_once = False
-    _types = []
-    _history = []
+    _types: List[str] = None
+    _history: List[Any] = None
     _clear_history = False
+
+    def __init__(self):
+        super().__init__()
+        self._types = []
+        self._history = []
+
+    def __save_current_config(self):
+        """对历史记录做上限截断后持久化当前配置。"""
+        self._history = _trim_history(self._history)
+        self.update_config({
+            "enabled": self._enabled,
+            "notify": self._notify,
+            "cron": self._cron,
+            "daily_cron": self._daily_cron,
+            "new_cron": self._new_cron,
+            "run_once": self._run_once,
+            "types": list(self._types or []),
+            "history": list(self._history),
+            "clear_history": self._clear_history,
+        })
 
     def init_plugin(self, config: dict = None):
         # 停止现有任务
         self.stop_service()
+        self._types = []
+        self._history = []
 
+        need_persist = False
         if config:
             self._enabled = config.get("enabled")
             self._notify = config.get("notify")
@@ -51,32 +96,29 @@ class BilibiliNotify(_PluginBase):
             self._daily_cron = config.get("daily_cron")
             self._new_cron = config.get("new_cron")
             self._run_once = config.get("run_once")
-            self._types = config.get("types") or []
-            self._history = config.get("history") or []
-            self._clear_history = config.get("clear_history") or False
-            
+            raw_types = config.get("types") or []
+            self._types = list(raw_types) if isinstance(raw_types, list) else []
+            raw_history = config.get("history") or []
+            self._history = _trim_history(raw_history)
+            self._clear_history = bool(config.get("clear_history") or False)
+
+            if isinstance(raw_history, list) and len(raw_history) != len(self._history):
+                need_persist = True
+
             # 如果需要清空历史记录
             if self._clear_history:
                 self._history = []
                 self._clear_history = False
+                need_persist = True
 
         # 如果启用插件且设置了立即运行，执行一次检查
         if self._enabled and self._run_once:
             self._run_once = False
             self.__check_daily_update()
             self.__check_new_update()
-            # 更新配置
-            self.update_config({
-                "enabled": self._enabled,
-                "notify": self._notify,
-                "cron": self._cron,
-                "daily_cron": self._daily_cron,
-                "new_cron": self._new_cron,
-                "run_once": self._run_once,
-                "types": self._types,
-                "history": self._history,
-                "clear_history": self._clear_history
-            })
+            self.__save_current_config()
+        elif need_persist:
+            self.__save_current_config()
 
     def __check_daily_update(self):
         """
@@ -88,17 +130,17 @@ class BilibiliNotify(_PluginBase):
 
         # 获取今天的日期
         today = datetime.now().date()
-        
+
         # 存储当天更新的剧集
         daily_updates = []
-        
+
         # 遍历所有选择的类型
         for type_name in self._types:
             # 获取类型对应的ID
             type_id = self.__get_type_id(type_name)
             if not type_id:
                 continue
-                
+
             # 调用API获取更新信息
             updates = self.__get_timeline(type_id)
             if not updates:
@@ -110,7 +152,7 @@ class BilibiliNotify(_PluginBase):
                 date_ts = day_data.get("date_ts")
                 if not date_ts:
                     continue
-                    
+
                 # 将时间戳转换为日期
                 update_date = datetime.fromtimestamp(date_ts).date()
                 if update_date != today:
@@ -125,19 +167,9 @@ class BilibiliNotify(_PluginBase):
         # 如果有当天更新，发送汇总通知
         if daily_updates and self._notify:
             self.__send_daily_notify(daily_updates)
-            
+
         # 更新配置
-        self.update_config({
-            "enabled": self._enabled,
-            "notify": self._notify,
-            "cron": self._cron,
-            "daily_cron": self._daily_cron,
-            "new_cron": self._new_cron,
-            "run_once": self._run_once,
-            "types": self._types,
-            "history": self._history,
-            "clear_history": self._clear_history
-        })
+        self.__save_current_config()
 
     def __check_new_update(self):
         """
@@ -147,16 +179,19 @@ class BilibiliNotify(_PluginBase):
             logger.warn("未选择任何类型，跳过检查")
             return
 
+        if self._history is None:
+            self._history = []
+
         # 获取今天的日期
         today = datetime.now().date()
-        
+
         # 遍历所有选择的类型
         for type_name in self._types:
             # 获取类型对应的ID
             type_id = self.__get_type_id(type_name)
             if not type_id:
                 continue
-                
+
             # 调用API获取更新信息
             updates = self.__get_timeline(type_id)
             if not updates:
@@ -168,7 +203,7 @@ class BilibiliNotify(_PluginBase):
                 date_ts = day_data.get("date_ts")
                 if not date_ts:
                     continue
-                    
+
                 # 将时间戳转换为日期
                 update_date = datetime.fromtimestamp(date_ts).date()
                 if update_date < today:
@@ -179,33 +214,19 @@ class BilibiliNotify(_PluginBase):
                 for episode in episodes:
                     season_id = episode.get("season_id")
                     pub_index = episode.get("pub_index", "")
-                    
+
                     # 只处理包含"第1话"且未通知过的更新
-                    if "第1话" in pub_index and season_id not in self._history:
+                    if "第1话" in pub_index and season_id is not None and season_id not in self._history:
                         # 发送通知
                         if self._notify:
                             self.__send_notify(episode, day_of_week)
-                            
+
                         # 添加到历史记录
                         self._history.append(season_id)
                         logger.info(f"检测到新番剧上架：{episode.get('title')} {pub_index}")
 
-        # 限制历史记录数量，避免过大
-        if len(self._history) > 100:
-            self._history = self._history[-100:]
-            
-        # 更新配置
-        self.update_config({
-            "enabled": self._enabled,
-            "notify": self._notify,
-            "cron": self._cron,
-            "daily_cron": self._daily_cron,
-            "new_cron": self._new_cron,
-            "run_once": self._run_once,
-            "types": self._types,
-            "history": self._history,
-            "clear_history": self._clear_history
-        })
+        # 截断并持久化配置
+        self.__save_current_config()
 
     def __get_type_id(self, type_name: str) -> Optional[int]:
         """
@@ -225,14 +246,14 @@ class BilibiliNotify(_PluginBase):
         try:
             # API URL
             url = "https://api.bilibili.com/pgc/web/timeline"
-            
+
             # 请求参数
             params = {
                 "types": type_id,
                 "before": 0,  # 从今天开始
                 "after": 7    # 到未来7天
             }
-            
+
             # 发送请求
             resp = RequestUtils(
                 headers={
@@ -240,7 +261,7 @@ class BilibiliNotify(_PluginBase):
                     "Referer": "https://www.bilibili.com"
                 }
             ).get_res(url, params=params)
-            
+
             if resp and resp.status_code == 200:
                 data = resp.json()
                 if data.get("code") == 0:
@@ -251,7 +272,7 @@ class BilibiliNotify(_PluginBase):
                 logger.error(f"请求失败，状态码：{resp.status_code if resp else 'None'}")
         except Exception as e:
             logger.error(f"获取时间线异常：{str(e)}")
-        
+
         return None
 
     def __send_notify(self, episode: Dict, day_of_week: str):
@@ -263,9 +284,8 @@ class BilibiliNotify(_PluginBase):
         pub_time = episode.get("pub_time", "")
         season_id = episode.get("season_id", "")
         cover = episode.get("cover", "")
-        
+
         # 构造消息内容
-        #message = f"【Bilibili上新】\n\n"
         message = f"\n番剧名称：{title}\n"
         message += f"更新集数：{pub_index}\n"
         week_map = {
@@ -274,7 +294,7 @@ class BilibiliNotify(_PluginBase):
         day_of_week_str = week_map.get(day_of_week, "")
         message += f"更新时间：{pub_time} (星期{day_of_week_str})\n"
         message += f"直达链接：https://www.bilibili.com/bangumi/play/ss{season_id}"
-        
+
         # 发送通知
         self.post_message(
             mtype=NotificationType.MediaServer,
@@ -289,17 +309,17 @@ class BilibiliNotify(_PluginBase):
         """
         if not episodes:
             return
-            
+
         # 构造消息内容
-        message = f""
+        message = ""
         for episode in episodes:
             title = episode.get("title", "")
             pub_index = episode.get("pub_index", "")
             pub_time = episode.get("pub_time", "")
             message += f"《{title}》 {pub_index} {pub_time}\n"
-            
+
         message += f"\n共{len(episodes)}部番剧更新"
-        
+
         # 发送通知
         self.post_message(
             mtype=NotificationType.MediaServer,
@@ -324,7 +344,7 @@ class BilibiliNotify(_PluginBase):
         services = []
         if self._enabled:
             from apscheduler.triggers.cron import CronTrigger
-            
+
             # 注册当天更新检查服务
             if self._daily_cron:
                 services.append({
@@ -334,7 +354,7 @@ class BilibiliNotify(_PluginBase):
                     "func": self.__check_daily_update,
                     "kwargs": {}
                 })
-            
+
             # 注册新上架检查服务
             if self._new_cron:
                 services.append({
@@ -344,7 +364,7 @@ class BilibiliNotify(_PluginBase):
                     "func": self.__check_new_update,
                     "kwargs": {}
                 })
-                
+
         return services
 
     def get_form(self) -> Tuple[List[dict], Dict[str, Any]]:
