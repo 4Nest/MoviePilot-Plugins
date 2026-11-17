@@ -1,6 +1,6 @@
 # MoviePilot 第三方插件市场
 
-个人维护的 MoviePilot 插件集合，适配 MoviePilot V2 插件系统。
+个人维护的 MoviePilot 插件集合，适配 MoviePilot V2 / NEO 插件系统，默认通过 GitHub Release 压缩包分发。
 
 ## 安装方式
 
@@ -14,56 +14,11 @@
 
 | 插件 | 版本 | 说明 |
 |------|------|------|
-| [媒体库封面生成](plugins.v2/mediacovergenerator) | v0.9.6 | 为 Emby/Jellyfin 媒体库生成动态/静态封面，支持 8 种风格、自定义字体与标题 |
-| [Bilibili 番剧更新通知](plugins.v2/bilibilinotify) | v1.0.1 | 监控 Bilibili 番剧更新，新番上线时推送通知 |
-| [Emby 用户管理](plugins.v2/embyusermanager) | v1.2.2 | 管理 Emby 媒体服务器账号增删改查、登录准入黑白名单及用户订阅数据 |
-| [保种删种管家](plugins.v2/seedcleaner) | v1.1.1 | 多维条件与正则清理规则、模拟干跑预览、磁盘低水位应急保盘，支持 qBittorrent 与 Transmission |
+| [Emby 用户管理](plugins.v2/embyusermanager) | v1.2.3 | 管理 Emby 媒体服务器账号增删改查、登录准入黑白名单及用户订阅数据 |
+| [保种删种管家](plugins.v2/seedcleaner) | v1.1.2 | 多维条件与正则清理规则、模拟干跑预览、磁盘低水位应急保盘，支持 qBittorrent 与 Transmission |
 
----
+## 目录结构
 
-### 媒体库封面生成 (MediaCoverGenerator)
-
-> **Fork 来源：** 本插件基于 [justzerock/MoviePilot-Plugins](https://github.com/justzerock/MoviePilot-Plugins) 的 MediaCoverGenerator 修改完成，感谢原作者！
-
-**功能特性：**
-- 支持 Emby / Jellyfin 媒体服务器
-- 4 种静态封面风格 + 4 种动态封面风格（APNG/GIF）
-- 自定义主标题/副标题内容、字体、字号、间距
-- 支持手动指定图片源（与媒体库同名的文件夹）
-- 自动从媒体项获取图片生成九宫格/全屏模糊等效果
-- 支持定时任务自动更新封面
-- 整理完成事件监听，自动更新对应媒体库封面
-
-**风格预览：**
-
-| 风格 | 类型 | 说明 |
-|------|------|------|
-| 风格 1 | 静态 | 单张大图 + 标题 |
-| 风格 2 | 静态 | 九宫格拼图 |
-| 风格 3 | 静态 | 多图拼接 + 标题 |
-| 风格 4 | 静态 | 全屏模糊渐变 |
-| 风格 1 | 动态 | 卡片翻转动画 |
-| 风格 2 | 动态 | 帷幕切换动画 |
-| 风格 3 | 动态 | 斜向滚动动画 |
-| 风格 4 | 动态 | 全屏模糊渐变动画 |
-
-**依赖：** `pillow>=11.0.0`
-
----
-
-### Bilibili 番剧更新通知 (BilibiliNotify)
-
-**功能特性：**
-- 监控指定 Bilibili 番剧的更新状态
-- 新番更新时通过 MoviePilot 通知渠道推送
-- 支持自定义监控频率（Cron 表达式）
-- 可配置通知类型与过滤规则
-
----
-
-## 开发相关
-
-本项目为个人自用插件集合，部分插件基于开源项目修改或适配。
-
-- [MoviePilot 官方插件开发文档](https://wiki.movie-pilot.org/zh/plugindev)
-- [MoviePilot 主仓库](https://github.com/jxxghp/MoviePilot)
+- `plugins.v2/`：插件运行时代码与编译后的联邦前端产物（`dist/`）
+- `frontend/`：各插件 Vue 模块联邦前端工程源码
+- `tests/`：插件后端逻辑与仓库元数据回归测试

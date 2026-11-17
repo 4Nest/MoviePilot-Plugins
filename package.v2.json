@@ -1,34 +1,15 @@
 {
-  "bilibilinotify": {
-    "name": "Bilibili番剧更新通知",
-    "description": "监控Bilibili番剧更新，当有新番剧更新时发送通知。",
-    "labels": "通知,Bilibili",
-    "version": "1.0.1",
-    "icon": "Bilibili_A.png",
-    "author": "NEST",
-    "level": 1,
-    "history": {
-      "v1.0.1": "修复作者主页头像地址，隔离实例级历史缓存并增加 200 条上限截断。"
-    }
-  },
-  "MediaCoverGenerator": {
-    "name": "媒体库封面生成（自用版）",
-    "description": "生成媒体库动态/静态封面，支持 Emby/Jellyfin",
-    "labels": "Emby,动态封面,媒体库",
-    "version": "0.9.6",
-    "icon": "emby.png",
-    "author": "justzerock,4Nest",
-    "level": 1
-  },
   "EmbyUserManager": {
     "name": "Emby用户管理",
     "description": "管理Emby媒体服务器账号增删改查、MoviePilot登录准入、黑白名单及订阅数据。",
     "labels": "Emby,用户管理,订阅",
-    "version": "1.2.2",
+    "version": "1.2.3",
     "icon": "emby.png",
     "author": "4Nest",
     "level": 1,
+    "release": true,
     "history": {
+      "v1.2.3": "切换为精简 Release ZIP 资产分发并剥离运行目录内前端源码。",
       "v1.2.2": "修复准入配置与白名单变更重启不落库缺陷，隔离 Emby 查询异常并优化用户迁移/删除按名过滤查询。",
       "v1.2.1": "修复编辑账号弹窗密码区布局。",
       "v1.2.0": "优化用户管理界面并补充黑白名单准入说明。"
@@ -38,11 +19,13 @@
     "name": "保种删种管家",
     "description": "多维条件与正则清理规则、模拟干跑、磁盘低水位应急保盘，支持 qBittorrent 与 Transmission。",
     "labels": "下载器,保种,清理",
-    "version": "1.1.1",
+    "version": "1.1.2",
     "icon": "clean.png",
     "author": "4Nest",
     "level": 1,
+    "release": true,
     "history": {
+      "v1.1.2": "切换为精简 Release ZIP 资产分发并剥离运行目录内前端源码。",
       "v1.1.1": "消除入库历史 N+1 数据库查询与概览页多余查库，修复真实内容路径/目录前缀入库安全锁，预编译规则正则并增加长度限制。",
       "v1.1.0": "拆分干跑预览为独立页面，优化清理历史时间单行展示与种子名称列宽自适应截断。",
       "v1.0.0": "初始版本：有序清理规则、正则在线测试、干跑预览、清理历史与磁盘低水位应急保盘。"

@@ -1,0 +1,114 @@
+name: Validate and Release Plugins
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: plugin-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    name: Validate and Package Releases
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Validate manifest and build release archives
+        run: |
+          python3 - <<'PY'
+          import ast
+          import json
+          import zipfile
+          from pathlib import Path
+
+          root = Path(".").resolve()
+          pkg = json.loads((root / "package.v2.json").read_text("utf-8"))
+          plugins_root = root / "plugins.v2"
+          out_dir = root / ".release_out"
+          out_dir.mkdir(parents=True, exist_ok=True)
+
+          forbidden_names = {".DS_Store", "__pycache__", "node_modules", "frontend"}
+          manifest_entries = []
+
+          for pid, meta in pkg.items():
+              plugin_dir = plugins_root / pid.lower()
+              if not plugin_dir.is_dir():
+                  raise SystemExit(f"Missing plugin directory: {plugin_dir}")
+
+              init_py = plugin_dir / "__init__.py"
+              tree = ast.parse(init_py.read_text("utf-8"))
+              found_cls = None
+              found_ver = None
+              for node in tree.body:
+                  if isinstance(node, ast.ClassDef):
+                      bases = [b.id for b in node.bases if isinstance(b, ast.Name)]
+                      if "_PluginBase" in bases:
+                          found_cls = node.name
+                          for stmt in node.body:
+                              if isinstance(stmt, ast.Assign):
+                                  for t in stmt.targets:
+                                      if isinstance(t, ast.Name) and t.id == "plugin_version":
+                                          found_ver = ast.literal_eval(stmt.value)
+              if found_cls != pid:
+                  raise SystemExit(f"Class name mismatch: package key={pid!r}, class={found_cls!r}")
+              if found_ver != meta.get("version"):
+                  raise SystemExit(f"Version mismatch for {pid}: package={meta.get('version')!r}, class={found_ver!r}")
+
+              for path in plugin_dir.rglob("*"):
+                  if path.name in forbidden_names:
+                      raise SystemExit(f"Forbidden file/dir in runtime plugin directory: {path}")
+
+              if meta.get("release"):
+                  version = meta["version"]
+                  tag = f"{pid}_v{version}"
+                  zip_name = f"{tag.lower()}.zip"
+                  zip_path = out_dir / zip_name
+                  with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+                      for file_path in sorted(plugin_dir.rglob("*")):
+                          if file_path.is_file():
+                              rel = file_path.relative_to(plugin_dir).as_posix()
+                              zf.write(file_path, arcname=rel)
+                  notes = (meta.get("history") or {}).get(f"v{version}") or f"Release {tag}"
+                  manifest_entries.append({
+                      "pid": pid,
+                      "version": version,
+                      "tag": tag,
+                      "zip_path": str(zip_path),
+                      "notes": notes,
+                  })
+
+          (out_dir / "releases.json").write_text(json.dumps(manifest_entries, ensure_ascii=False, indent=2), "utf-8")
+          print(f"Validated {len(pkg)} plugins; prepared {len(manifest_entries)} release packages.")
+          PY
+
+      - name: Publish GitHub Releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          jq -c '.[]' .release_out/releases.json | while read -r item; do
+            tag=$(printf '%s' "$item" | jq -r '.tag')
+            zip_path=$(printf '%s' "$item" | jq -r '.zip_path')
+            notes=$(printf '%s' "$item" | jq -r '.notes')
+            notes_file=$(mktemp)
+            printf '%s\n' "$notes" > "$notes_file"
+            if gh release view "$tag" >/dev/null 2>&1; then
+              gh release upload "$tag" "$zip_path" --clobber
+              gh release edit "$tag" --title "$tag" --notes-file "$notes_file"
+            else
+              gh release create "$tag" "$zip_path" --target "$GITHUB_SHA" --title "$tag" --notes-file "$notes_file"
+            fi
+            rm -f "$notes_file"
+          done

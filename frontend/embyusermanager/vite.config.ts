@@ -23,7 +23,7 @@ export default defineConfig({
     }),
   ],
   build: {
-    outDir: '../dist',
+    outDir: '../../plugins.v2/embyusermanager/dist',
     emptyOutDir: true,
     target: 'esnext',
     minify: false,

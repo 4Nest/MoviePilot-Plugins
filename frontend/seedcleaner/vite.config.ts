@@ -24,7 +24,7 @@ export default defineConfig({
     }),
   ],
   build: {
-    outDir: '../dist',
+    outDir: '../../plugins.v2/seedcleaner/dist',
     emptyOutDir: true,
     target: 'esnext',
     minify: false,
