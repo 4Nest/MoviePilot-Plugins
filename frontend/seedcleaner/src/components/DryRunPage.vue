@@ -14,8 +14,6 @@ const emit = defineEmits<{
   (e: 'back'): void
   (e: 'dry-run'): void
   (e: 'open-settings'): void
-  (e: 'open-templates'): void
-  (e: 'open-regex'): void
 }>()
 
 const keyword = ref('')
@@ -42,7 +40,10 @@ const matchedDownloaderCount = computed(() => {
 watch(
   () => props.preview,
   () => {
-    if (selectedDownloader.value !== 'all' && !downloaderOptions.value.some(opt => opt.value === selectedDownloader.value)) {
+    if (
+      selectedDownloader.value !== 'all' &&
+      !downloaderOptions.value.some(opt => opt.value === selectedDownloader.value)
+    ) {
       selectedDownloader.value = 'all'
     }
     if (selectedRule.value !== 'all' && !ruleOptions.value.some(opt => opt.value === selectedRule.value)) {
@@ -82,7 +83,7 @@ function resetFilters() {
 
 const previewHeaders = [
   {
-    title: '种子',
+    title: '种子名称',
     key: 'name',
     headerProps: { class: 'col-torrent-head' },
     cellProps: { class: 'col-torrent' },
@@ -90,48 +91,48 @@ const previewHeaders = [
   {
     title: '下载器',
     key: 'downloader',
-    width: '124px',
-    minWidth: '110px',
+    width: '120px',
+    minWidth: '108px',
     headerProps: { class: 'col-nowrap' },
     cellProps: { class: 'col-nowrap' },
   },
   {
     title: '体积',
     key: 'size_gb',
-    width: '108px',
-    minWidth: '100px',
+    width: '104px',
+    minWidth: '96px',
     headerProps: { class: 'col-nowrap' },
     cellProps: { class: 'col-nowrap col-num' },
   },
   {
     title: '分享率',
     key: 'ratio',
-    width: '90px',
-    minWidth: '86px',
+    width: '86px',
+    minWidth: '80px',
     headerProps: { class: 'col-nowrap' },
     cellProps: { class: 'col-nowrap col-num' },
   },
   {
     title: '做种时长',
     key: 'seeding_hours',
-    width: '112px',
-    minWidth: '104px',
+    width: '104px',
+    minWidth: '96px',
     headerProps: { class: 'col-nowrap' },
     cellProps: { class: 'col-nowrap col-num' },
   },
   {
     title: '命中规则',
     key: 'rule_name',
-    width: '164px',
-    minWidth: '140px',
+    width: '156px',
+    minWidth: '132px',
     headerProps: { class: 'col-nowrap' },
     cellProps: { class: 'col-rule' },
   },
   {
     title: '命中原因',
     key: 'reason',
-    width: '270px',
-    minWidth: '230px',
+    width: '260px',
+    minWidth: '220px',
     headerProps: { class: 'col-nowrap' },
     cellProps: { class: 'col-reason' },
   },
@@ -139,135 +140,104 @@ const previewHeaders = [
 </script>
 
 <template>
-  <div class="dry-run-page">
-    <v-row class="summary-row">
-      <v-col cols="6" md="3">
-        <v-card class="metric-card" variant="tonal">
-          <v-icon color="info" icon="mdi-eye-check-outline" />
-          <div>
-            <strong>{{ preview ? previewItems.length : '-' }}</strong>
-            <span>命中种子</span>
-          </div>
-        </v-card>
-      </v-col>
-      <v-col cols="6" md="3">
-        <v-card class="metric-card" variant="tonal">
-          <v-icon color="primary" icon="mdi-database-remove-outline" />
-          <div>
-            <strong>{{ preview ? `${previewSize.toFixed(2)} GB` : '-' }}</strong>
-            <span>预计释放空间</span>
-          </div>
-        </v-card>
-      </v-col>
-      <v-col cols="6" md="3">
-        <v-card class="metric-card" variant="tonal">
-          <v-icon color="warning" icon="mdi-download-network-outline" />
-          <div>
-            <strong>{{ preview ? matchedDownloaderCount : '-' }}</strong>
-            <span>涉及下载器（{{ enabledRuleCount }} 规则{{ guardEnabled ? ' + 保盘' : '' }}）</span>
-          </div>
-        </v-card>
-      </v-col>
-      <v-col cols="6" md="3">
-        <v-card class="metric-card" variant="tonal">
-          <v-icon color="success" icon="mdi-clock-check-outline" />
-          <div class="min-w-0">
-            <strong class="single-line-time">{{ lastRunAt ? formatSingleLineTime(lastRunAt) : '尚未执行' }}</strong>
-            <span>最近预览时间</span>
-          </div>
-        </v-card>
-      </v-col>
-    </v-row>
+  <div class="dry-view">
+    <v-alert v-if="preview?.errors?.length" type="warning" variant="tonal" density="compact" rounded="lg" class="mb-3">
+      <div v-for="error in preview.errors" :key="error">{{ error }}</div>
+    </v-alert>
 
-    <section class="content-section">
-      <div class="section-heading">
-        <div class="heading-left">
-          <v-icon icon="mdi-test-tube" />
-          <span>模拟干跑预览</span>
-          <v-chip v-if="preview" size="small" color="primary" variant="tonal">
-            命中 {{ previewItems.length }} 项 · {{ previewSize.toFixed(2) }} GB
-          </v-chip>
-          <span class="text-caption text-medium-emphasis">仅模拟规则匹配，不会执行任何删除操作</span>
+    <!-- 已执行干跑：紧凑摘要条 + 过滤栏 + 候选表 -->
+    <template v-if="preview">
+      <div class="dry-summary-bar">
+        <div class="dry-summary-tags">
+          <span class="dry-badge is-primary">
+            <v-icon icon="mdi-eye-check-outline" size="14" />
+            命中 <strong>{{ previewItems.length }}</strong> 项
+          </span>
+          <span class="dry-badge is-info">
+            <v-icon icon="mdi-database-remove-outline" size="14" />
+            预计释放 <strong>{{ previewSize.toFixed(2) }} GB</strong>
+          </span>
+          <span class="dry-badge">
+            <v-icon icon="mdi-download-network-outline" size="14" />
+            涉及 {{ matchedDownloaderCount }} 个下载器 · {{ enabledRuleCount }} 规则{{ guardEnabled ? ' + 保盘' : '' }}
+          </span>
+          <span v-if="lastRunAt" class="dry-badge is-muted">
+            <v-icon icon="mdi-clock-check-outline" size="13" />
+            {{ formatSingleLineTime(lastRunAt) }}
+          </span>
         </div>
-        <div class="d-flex align-center flex-wrap ga-2">
-          <v-btn size="small" variant="text" prepend-icon="mdi-regex" @click="emit('open-regex')">正则测试</v-btn>
-          <v-btn size="small" variant="text" prepend-icon="mdi-view-grid-plus" @click="emit('open-templates')">预设模板</v-btn>
+
+        <span class="dry-safe-hint">
+          <v-icon icon="mdi-shield-check-outline" size="14" />
+          仅模拟匹配，不执行删除
+        </span>
+      </div>
+
+      <div v-if="previewItems.length" class="dry-filter-row">
+        <v-text-field
+          v-model="keyword"
+          density="compact"
+          variant="outlined"
+          hide-details
+          clearable
+          prepend-inner-icon="mdi-magnify"
+          placeholder="搜索种子名称、规则或命中原因..."
+          class="dry-search"
+        />
+        <v-select
+          v-model="selectedDownloader"
+          :items="downloaderOptions"
+          density="compact"
+          variant="outlined"
+          hide-details
+          class="dry-select"
+        />
+        <v-select
+          v-model="selectedRule"
+          :items="ruleOptions"
+          density="compact"
+          variant="outlined"
+          hide-details
+          class="dry-select"
+        />
+        <div class="dry-filter-meta">
+          <span>
+            显示 <strong>{{ filteredItems.length }}</strong> / {{ previewItems.length }}
+            （{{ filteredSizeGb.toFixed(2) }} GB）
+          </span>
+          <v-btn v-if="hasActiveFilter" size="x-small" variant="tonal" rounded="lg" color="primary" @click="resetFilters">
+            重置
+          </v-btn>
         </div>
       </div>
 
-      <v-alert v-if="preview?.errors?.length" type="warning" variant="tonal" class="mb-3">
-        <div v-for="error in preview.errors" :key="error">{{ error }}</div>
-      </v-alert>
-
-      <v-card v-if="preview && previewItems.length" variant="outlined" class="filter-bar mb-3">
-        <div class="filter-grid">
-          <v-text-field
-            v-model="keyword"
-            density="compact"
-            variant="outlined"
-            hide-details
-            clearable
-            prepend-inner-icon="mdi-magnify"
-            placeholder="搜索种子名称、命中规则或原因..."
-            class="filter-search"
-          />
-          <v-select
-            v-model="selectedDownloader"
-            :items="downloaderOptions"
-            density="compact"
-            variant="outlined"
-            hide-details
-            class="filter-select"
-          />
-          <v-select
-            v-model="selectedRule"
-            :items="ruleOptions"
-            density="compact"
-            variant="outlined"
-            hide-details
-            class="filter-select"
-          />
-          <div class="filter-summary">
-            <span>
-              当前显示 <strong>{{ filteredItems.length }}</strong> / {{ previewItems.length }} 项
-              （{{ filteredSizeGb.toFixed(2) }} GB）
-            </span>
-            <v-btn v-if="hasActiveFilter" size="x-small" variant="text" color="primary" @click="resetFilters">
-              重置筛选
-            </v-btn>
-          </div>
-        </div>
-      </v-card>
-
-      <v-card v-if="preview" variant="outlined" class="table-card">
+      <div class="dry-table-card">
         <v-data-table
           :headers="previewHeaders"
           :items="filteredItems"
           item-value="hash"
-          density="comfortable"
+          density="compact"
           :items-per-page="20"
           :items-per-page-options="[10, 20, 50, 100]"
           hover
         >
           <template #item.name="{ item }">
             <div class="torrent-cell">
-              <div class="torrent-name" :title="item.name">{{ item.name }}</div>
-              <v-chip v-if="!item.delete_files" size="x-small" variant="tonal" class="keep-file-chip">
-                保留源文件
-              </v-chip>
+              <span class="torrent-name" :title="item.name">{{ item.name }}</span>
+              <span v-if="!item.delete_files" class="keep-chip">仅删任务</span>
             </div>
           </template>
           <template #item.downloader="{ item }">
-            <span class="nowrap-text">{{ item.downloader }}</span>
+            <span class="nowrap-text text-medium-emphasis">{{ item.downloader }}</span>
           </template>
           <template #item.size_gb="{ item }">
             <span class="nowrap-num">{{ Number(item.size_gb || 0).toFixed(2) }} GB</span>
           </template>
           <template #item.ratio="{ item }">
-            <v-chip size="small" variant="tonal" class="nowrap-num">{{ Number(item.ratio || 0).toFixed(2) }}</v-chip>
+            <span class="ratio-pill">{{ Number(item.ratio || 0).toFixed(2) }}</span>
           </template>
           <template #item.seeding_hours="{ item }">
-            <span class="nowrap-num">{{ Number(item.seeding_hours || 0).toFixed(1) }} h</span>
+            <span class="nowrap-num text-medium-emphasis">{{ Number(item.seeding_hours || 0).toFixed(1) }} h</span>
           </template>
           <template #item.rule_name="{ item }">
             <span class="rule-name-text" :title="item.rule_name">{{ item.rule_name }}</span>
@@ -276,153 +246,180 @@ const previewHeaders = [
             <span class="reason-text" :title="item.reason">{{ item.reason }}</span>
           </template>
           <template #no-data>
-            <div v-if="hasActiveFilter" class="empty-state">
-              <v-icon size="40" icon="mdi-filter-off-outline" color="primary" />
-              <strong>没有匹配筛选条件的候选种子</strong>
-              <v-btn size="small" variant="tonal" color="primary" @click="resetFilters">清空筛选条件</v-btn>
+            <div v-if="hasActiveFilter" class="dry-inline-empty">
+              <v-icon size="32" icon="mdi-filter-off-outline" class="text-medium-emphasis" />
+              <div class="text-body-2 font-weight-medium">没有匹配当前筛选条件的候选种子</div>
+              <v-btn size="small" variant="tonal" rounded="lg" color="primary" @click="resetFilters">
+                重置筛选
+              </v-btn>
             </div>
-            <div v-else class="empty-state">
-              <v-icon size="44" icon="mdi-shield-check" color="success" />
-              <strong>没有种子命中清理条件</strong>
-              <span>当前配置下所有做种任务均处于安全保留状态，无需删除。</span>
+            <div v-else class="dry-inline-empty">
+              <v-icon size="34" icon="mdi-shield-check" color="success" />
+              <div class="text-subtitle-2 font-weight-bold">没有种子命中清理条件</div>
+              <div class="text-caption text-medium-emphasis">当前所有做种任务均处于安全保留状态</div>
             </div>
           </template>
         </v-data-table>
-      </v-card>
+      </div>
+    </template>
 
-      <v-card v-else variant="outlined" class="preview-placeholder">
-        <v-avatar size="68" color="primary" variant="tonal">
-          <v-icon size="36" icon="mdi-clipboard-search-outline" />
-        </v-avatar>
-        <div class="placeholder-body">
-          <strong>先模拟干跑，再安全清理</strong>
-          <p>
-            干跑预览会实时读取全部启用下载器的任务快照，完整检验全局保护标签、入库锁、多维规则与低水位保盘策略，列出每个命中种子的体积、分享率、做种时长及具体原因，绝不会调用删除接口。
-          </p>
-          <div class="d-flex flex-wrap ga-3 mt-4">
-            <v-btn color="primary" prepend-icon="mdi-play-outline" :loading="working === 'dry'" @click="emit('dry-run')">
-              开始模拟干跑
-            </v-btn>
-            <v-btn variant="outlined" prepend-icon="mdi-tune" @click="emit('open-settings')">调整清理规则</v-btn>
-            <v-btn variant="text" prepend-icon="mdi-arrow-left" @click="emit('back')">返回运行概览</v-btn>
-          </div>
-        </div>
-      </v-card>
-    </section>
+    <!-- 尚未执行干跑：统一扁平紧凑引导框 -->
+    <div v-else class="dry-empty-box">
+      <v-icon icon="mdi-clipboard-search-outline" size="38" class="mb-2 text-primary" />
+      <div class="text-subtitle-1 font-weight-bold">先模拟干跑，再执行清理</div>
+      <div class="text-body-2 text-medium-emphasis mt-1 mb-4 dry-empty-desc">
+        实时扫描已启用下载器的任务快照，完整校验保护标签、入库锁、多维规则与低水位保盘策略，不会调用删除接口。
+      </div>
+      <div class="d-flex flex-wrap justify-center ga-2">
+        <v-btn
+          size="small"
+          color="primary"
+          variant="flat"
+          rounded="lg"
+          class="px-4"
+          prepend-icon="mdi-play-outline"
+          :loading="working === 'dry'"
+          @click="emit('dry-run')"
+        >
+          开始模拟干跑
+        </v-btn>
+        <v-btn
+          size="small"
+          variant="outlined"
+          rounded="lg"
+          class="px-4"
+          prepend-icon="mdi-tune"
+          @click="emit('open-settings')"
+        >
+          规则配置
+        </v-btn>
+        <v-btn
+          size="small"
+          variant="text"
+          rounded="lg"
+          prepend-icon="mdi-arrow-left"
+          @click="emit('back')"
+        >
+          返回概览
+        </v-btn>
+      </div>
+    </div>
   </div>
 </template>
 
 <style scoped>
-.summary-row {
-  margin-top: 8px;
-}
-
-.metric-card {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  padding: 16px 18px;
-  border-radius: 14px;
-  height: 100%;
-}
-
-.metric-card > .v-icon {
-  font-size: 28px;
-  flex-shrink: 0;
-}
-
-.metric-card div {
+.dry-view {
   display: flex;
   flex-direction: column;
-  min-width: 0;
+  gap: 12px;
 }
 
-.metric-card strong {
-  font-size: 18px;
-  line-height: 1.25;
+.dry-view :deep(.v-field) {
+  border-radius: 8px;
 }
 
-.single-line-time {
-  font-size: 15px !important;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.metric-card span {
-  font-size: 12px;
-  opacity: 0.68;
-  margin-top: 3px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.content-section {
-  margin-top: 24px;
-}
-
-.section-heading {
+.dry-summary-bar {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 8px;
+  padding: 10px 14px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  border-radius: 12px;
+  background: rgb(var(--v-theme-surface));
+  transition: border-color 0.16s ease;
 }
 
-.heading-left {
+.dry-summary-bar:hover {
+  border-color: rgba(var(--v-theme-on-surface), 0.15);
+}
+
+.dry-summary-tags {
   display: flex;
-  align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
+  align-items: center;
+  gap: 8px;
 }
 
-.heading-left > .v-icon {
+.dry-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.06);
+  border-radius: 999px;
+  background: rgba(var(--v-theme-on-surface), 0.04);
+  color: rgba(var(--v-theme-on-surface), 0.78);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dry-badge.is-primary {
+  border-color: rgba(var(--v-theme-primary), 0.2);
+  background: rgba(var(--v-theme-primary), 0.1);
   color: rgb(var(--v-theme-primary));
 }
 
-.heading-left > span:first-of-type {
-  font-weight: 650;
-  font-size: 17px;
+.dry-badge.is-info {
+  border-color: rgba(var(--v-theme-info), 0.2);
+  background: rgba(var(--v-theme-info), 0.1);
+  color: rgb(var(--v-theme-info));
 }
 
-.filter-bar {
-  padding: 12px 14px;
-  border-radius: 12px;
+.dry-badge.is-muted {
+  border-color: transparent;
+  background: transparent;
+  color: rgba(var(--v-theme-on-surface), 0.54);
 }
 
-.filter-grid {
-  display: flex;
+.dry-safe-hint {
+  display: inline-flex;
   align-items: center;
+  gap: 4px;
+  color: rgb(var(--v-theme-success));
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.dry-filter-row {
+  display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
 }
 
-.filter-search {
-  flex: 1 1 280px;
-  min-width: 220px;
+.dry-search {
+  flex: 1 1 260px;
+  min-width: 200px;
 }
 
-.filter-select {
-  flex: 0 1 190px;
-  min-width: 155px;
+.dry-select {
+  flex: 0 1 180px;
+  min-width: 150px;
 }
 
-.filter-summary {
-  margin-left: auto;
+.dry-filter-meta {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-left: auto;
+  color: rgba(var(--v-theme-on-surface), 0.68);
   font-size: 12px;
-  color: rgba(var(--v-theme-on-surface), 0.72);
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 
-.table-card {
+.dry-table-card {
   overflow: hidden;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
   border-radius: 12px;
+  background: rgb(var(--v-theme-surface));
+  transition: border-color 0.16s ease;
+}
+
+.dry-table-card:hover {
+  border-color: rgba(var(--v-theme-on-surface), 0.15);
 }
 
 :deep(th.col-nowrap),
@@ -445,15 +442,15 @@ const previewHeaders = [
   :deep(td.col-torrent),
   :deep(th.col-torrent-head) {
     width: auto;
-    min-width: 340px;
-    max-width: 560px;
+    min-width: 320px;
+    max-width: 540px;
   }
 }
 
 .torrent-cell {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   width: 100%;
 }
@@ -464,28 +461,48 @@ const previewHeaders = [
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 13px;
   font-weight: 500;
 }
 
-.keep-file-chip {
+.keep-chip {
   flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 5px;
+  background: rgba(var(--v-theme-info), 0.14);
+  color: rgb(var(--v-theme-info));
+  font-size: 10.5px;
+  font-weight: 600;
+}
+
+.ratio-pill {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(var(--v-theme-on-surface), 0.06);
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 
 .nowrap-text {
   white-space: nowrap;
+  font-size: 12.5px;
 }
 
 .nowrap-num {
   white-space: nowrap;
+  font-size: 12.5px;
   font-variant-numeric: tabular-nums;
 }
 
 .rule-name-text {
   display: block;
-  max-width: 160px;
+  max-width: 156px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12.5px;
 }
 
 .reason-text {
@@ -493,60 +510,45 @@ const previewHeaders = [
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  max-width: 280px;
+  max-width: 260px;
   white-space: normal;
-  line-height: 1.45;
+  line-height: 1.4;
   font-size: 12px;
-  color: rgba(var(--v-theme-on-surface), 0.75);
-}
-
-.preview-placeholder {
-  display: flex;
-  align-items: center;
-  gap: 24px;
-  flex-wrap: wrap;
-  padding: 36px 32px;
-  border-style: dashed;
-  border-radius: 16px;
-}
-
-.placeholder-body {
-  flex: 1 1 360px;
-  max-width: 720px;
-}
-
-.placeholder-body strong {
-  font-size: 18px;
-}
-
-.placeholder-body p {
-  margin: 8px 0 0;
   color: rgba(var(--v-theme-on-surface), 0.68);
-  font-size: 13.5px;
-  line-height: 1.65;
 }
 
-.empty-state {
-  min-height: 200px;
+.dry-inline-empty {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  padding: 24px;
-  color: rgba(var(--v-theme-on-surface), 0.68);
+  gap: 8px;
+  padding: 36px 20px;
 }
 
-.empty-state strong {
-  color: rgb(var(--v-theme-on-surface));
+.dry-empty-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 44px 20px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  border-radius: 12px;
+  background: rgb(var(--v-theme-surface));
+  text-align: center;
+  transition: border-color 0.16s ease;
+}
+
+.dry-empty-box:hover {
+  border-color: rgba(var(--v-theme-on-surface), 0.15);
+}
+
+.dry-empty-desc {
+  max-width: 560px;
 }
 
 @media (max-width: 700px) {
-  .preview-placeholder {
-    padding: 22px 18px;
-  }
-
-  .filter-summary {
+  .dry-filter-meta {
     width: 100%;
     justify-content: space-between;
   }

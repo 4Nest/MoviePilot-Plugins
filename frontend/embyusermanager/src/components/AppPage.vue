@@ -205,6 +205,18 @@ const createTemplateUsers = computed(() => createServerObj.value?.users || [])
 const editServerObj = computed(() => servers.value.find(s => s.name === editForm.server) || servers.value[0])
 const editServerFolders = ref<EmbyFolderItem[]>([])
 
+const filterPills = computed(() => [
+  { value: 'all' as const, label: '全部', count: users.value.length },
+  { value: 'allowed' as const, label: '可登录', count: users.value.filter(u => u.access_status === 'allowed').length },
+  {
+    value: 'blocked' as const,
+    label: '准入拦截',
+    count: users.value.filter(u => u.access_status === 'blocked').length,
+  },
+  { value: 'disabled' as const, label: '已禁用', count: users.value.filter(u => u.access_status === 'disabled').length },
+  { value: 'registered' as const, label: '已登录 MP', count: stats.value.mp_registered_count },
+])
+
 function notifySuccess(msg: string) {
   toast?.success(msg)
 }
@@ -265,12 +277,6 @@ const filteredUsers = computed(() => {
   })
 })
 
-function statusColor(status: UserOverviewItem['access_status']) {
-  if (status === 'allowed') return 'success'
-  if (status === 'blocked') return 'warning'
-  return 'error'
-}
-
 function statusLabel(status: UserOverviewItem['access_status']) {
   if (status === 'allowed') return '允许登录'
   if (status === 'blocked') return '准入拦截'
@@ -278,16 +284,22 @@ function statusLabel(status: UserOverviewItem['access_status']) {
 }
 
 function allowModeLabel(mode: PluginConfig['allow_mode']) {
-  if (mode === 'whitelist') return '白名单模式'
-  if (mode === 'blacklist') return '黑名单模式'
-  return '允许全部 Emby 用户'
+  if (mode === 'whitelist') return `白名单 (${config.value.whitelist.length})`
+  if (mode === 'blacklist') return `黑名单 (${config.value.blacklist.length})`
+  return '全部允许'
 }
 
-function formatDateText(value: string | null) {
-  if (!value) return '暂无记录'
+function formatCompactTime(value: string | null) {
+  if (!value) return '暂无活跃'
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  return date.toLocaleString('zh-CN', { hour12: false })
+  const diffSec = Math.floor((Date.now() - date.getTime()) / 1000)
+  if (diffSec >= 0 && diffSec < 60) return '刚刚'
+  if (diffSec >= 60 && diffSec < 3600) return `${Math.floor(diffSec / 60)} 分钟前`
+  if (diffSec >= 3600 && diffSec < 86400) return `${Math.floor(diffSec / 3600)} 小时前`
+  if (diffSec >= 86400 && diffSec < 86400 * 7) return `${Math.floor(diffSec / 86400)} 天前`
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
 }
 
 function primaryServerAccount(user: UserOverviewItem): EmbyServerAccount | null {
@@ -298,11 +310,19 @@ function primaryServerAccount(user: UserOverviewItem): EmbyServerAccount | null 
   return keys.length ? map[keys[0]] : null
 }
 
-function folderSummaryText(user: UserOverviewItem): string {
+function userMetaSummary(user: UserOverviewItem): string {
+  const serverPart = user.emby_servers.length ? user.emby_servers.join('、') : '仅本地记录'
   const acc = primaryServerAccount(user)
-  if (!acc) return '仅本地账号'
-  if (acc.enable_all_folders) return '全部媒体库'
-  return `限定 ${acc.enabled_folders?.length || 0} 个媒体库`
+  if (!acc) return serverPart
+  const folderPart = acc.enable_all_folders ? '全部媒体库' : `${acc.enabled_folders?.length || 0} 个媒体库`
+  const pwdPart = user.has_password === false ? ' · 免密' : ''
+  return `${serverPart} · ${folderPart}${pwdPart}`
+}
+
+function copyPasswordText(pwd?: string) {
+  if (!pwd) return
+  navigator.clipboard?.writeText(pwd)
+  notifySuccess('密码已复制到剪贴板')
 }
 
 // 打开新建 Emby 账号弹窗
@@ -639,36 +659,54 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="emby-user-manager">
-    <section class="emby-hero">
-      <div class="emby-hero__copy">
-        <div class="emby-eyebrow">
-          <span class="emby-live-dot" />
-          EMBY ACCOUNT CENTER
+  <div class="emby-page">
+    <!-- 1. 精炼顶部标题与操作栏 -->
+    <header class="emby-topbar">
+      <div class="emby-topbar__left">
+        <div class="emby-topbar__icon">
+          <v-icon icon="mdi-account-group-outline" size="22" />
         </div>
-        <div class="emby-hero__title">
-          <div class="emby-hero__icon">
-            <v-icon icon="mdi-account-group-outline" size="30" />
+        <div class="emby-topbar__heading">
+          <div class="emby-topbar__title-row">
+            <h2>Emby 用户管理</h2>
+            <span class="emby-tag">
+              <v-icon icon="mdi-server-outline" size="13" />
+              {{ servers.length ? servers.map(s => s.name).join('、') : '未连接服务器' }}
+            </span>
+            <button
+              type="button"
+              class="emby-tag emby-tag--clickable"
+              :class="config.enabled ? 'is-active' : 'is-muted'"
+              @click="openSettingsDialog"
+            >
+              <v-icon :icon="config.enabled ? 'mdi-shield-check-outline' : 'mdi-shield-off-outline'" size="13" />
+              {{ config.enabled ? `准入：${allowModeLabel(config.allow_mode)}` : '准入已关闭' }}
+            </button>
           </div>
-          <div>
-            <h2>用户与访问控制</h2>
-            <p>集中管理 Emby 账号、媒体库权限与 MoviePilot 订阅准入。</p>
-          </div>
-        </div>
-        <div class="emby-hero__tags">
-          <span class="emby-soft-tag">
-            <v-icon icon="mdi-server-outline" size="14" />
-            {{ servers.length ? servers.map(s => s.name).join('、') : '未连接媒体服务器' }}
-          </span>
-          <span class="emby-soft-tag" :class="config.enabled ? 'is-success' : 'is-muted'">
-            <v-icon :icon="config.enabled ? 'mdi-shield-check-outline' : 'mdi-shield-off-outline'" size="14" />
-            {{ config.enabled ? allowModeLabel(config.allow_mode) : '准入拦截已关闭' }}
-          </span>
         </div>
       </div>
-      <div class="emby-hero__actions">
+
+      <div class="emby-topbar__actions">
         <v-btn
-          class="emby-primary-action"
+          icon="mdi-refresh"
+          variant="text"
+          size="small"
+          rounded="lg"
+          aria-label="刷新用户列表"
+          :loading="loading"
+          @click="fetchOverview"
+        />
+        <v-btn
+          size="small"
+          variant="outlined"
+          rounded="lg"
+          prepend-icon="mdi-shield-lock-outline"
+          @click="openSettingsDialog"
+        >
+          准入策略
+        </v-btn>
+        <v-btn
+          size="small"
           color="primary"
           variant="flat"
           rounded="lg"
@@ -678,128 +716,58 @@ onMounted(() => {
         >
           新建账号
         </v-btn>
-        <v-btn variant="tonal" rounded="lg" prepend-icon="mdi-shield-tune-outline" @click="openSettingsDialog">
-          准入策略
-        </v-btn>
-        <v-btn
-          variant="text"
-          rounded="lg"
-          icon="mdi-refresh"
-          aria-label="刷新用户列表"
-          :loading="loading"
-          @click="fetchOverview"
-        />
       </div>
+    </header>
+
+    <!-- 2. 一体化统计筛选与搜索工具条 -->
+    <section class="emby-toolbar">
+      <div class="emby-toolbar__left">
+        <div class="emby-pills" role="group" aria-label="用户状态筛选">
+          <button
+            v-for="item in filterPills"
+            :key="item.value"
+            type="button"
+            class="emby-pill"
+            :class="{ 'is-active': statusFilter === item.value }"
+            @click="statusFilter = item.value"
+          >
+            <span>{{ item.label }}</span>
+            <strong>{{ item.count }}</strong>
+          </button>
+        </div>
+
+        <span class="emby-sub-counter" title="全员电影与剧集订阅总数">
+          <v-icon icon="mdi-playlist-star" size="14" />
+          订阅 {{ stats.total_subscribe_count }}
+        </span>
+      </div>
+
+      <v-text-field
+        v-model="keyword"
+        class="emby-search"
+        prepend-inner-icon="mdi-magnify"
+        placeholder="搜索用户名..."
+        density="compact"
+        variant="outlined"
+        hide-details
+        clearable
+      />
     </section>
 
-    <section class="emby-metrics" aria-label="用户统计概览">
-      <article class="emby-metric emby-metric--primary">
-        <div class="emby-metric__icon"><v-icon icon="mdi-account-multiple-outline" /></div>
-        <div>
-          <div class="emby-metric__label">Emby 账号</div>
-          <div class="emby-metric__value">{{ stats.emby_user_count }}</div>
-          <div class="emby-metric__hint">{{ servers.length }} 个已连接实例</div>
-        </div>
-      </article>
-      <article class="emby-metric emby-metric--success">
-        <div class="emby-metric__icon"><v-icon icon="mdi-shield-check-outline" /></div>
-        <div>
-          <div class="emby-metric__label">允许登录 MP</div>
-          <div class="emby-metric__value">{{ stats.allowed_user_count }}</div>
-          <div class="emby-metric__hint">当前准入规则下可登录</div>
-        </div>
-      </article>
-      <article class="emby-metric emby-metric--info">
-        <div class="emby-metric__icon"><v-icon icon="mdi-login-variant" /></div>
-        <div>
-          <div class="emby-metric__label">已登录 MP</div>
-          <div class="emby-metric__value">{{ stats.mp_registered_count }}</div>
-          <div class="emby-metric__hint">首次 Emby 登录自动建号</div>
-        </div>
-      </article>
-      <article class="emby-metric emby-metric--warning">
-        <div class="emby-metric__icon"><v-icon icon="mdi-playlist-star" /></div>
-        <div>
-          <div class="emby-metric__label">用户订阅</div>
-          <div class="emby-metric__value">{{ stats.total_subscribe_count }}</div>
-          <div class="emby-metric__hint">电影与剧集订阅合计</div>
-        </div>
-      </article>
-    </section>
+    <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-3" rounded />
 
-    <section class="emby-policy-guide">
-      <div class="emby-policy-guide__heading">
-        <div class="emby-policy-guide__icon"><v-icon icon="mdi-shield-key-outline" size="22" /></div>
-        <div>
-          <h3>黑白名单控制「能否登录 MP」</h3>
-          <p>不改变 Emby 账号本身的媒体库权限，也不会删除账号或订阅。</p>
-        </div>
+    <!-- 空状态 -->
+    <div v-if="!loading && filteredUsers.length === 0" class="emby-empty">
+      <v-icon icon="mdi-account-search-outline" size="38" class="mb-2 text-medium-emphasis" />
+      <div class="text-subtitle-1 font-weight-bold">
+        {{ keyword || statusFilter !== 'all' ? '未找到匹配的用户' : '暂无 Emby 用户' }}
       </div>
-      <div class="emby-policy-guide__modes">
-        <div class="emby-policy-mode" :class="{ 'is-active': config.allow_mode === 'all' }">
-          <v-icon icon="mdi-account-check-outline" size="18" />
-          <div><strong>全部模式</strong><span>不读取名单，未被禁用的用户均可登录。</span></div>
-        </div>
-        <div class="emby-policy-mode" :class="{ 'is-active': config.allow_mode === 'whitelist' }">
-          <v-icon icon="mdi-playlist-check" size="18" />
-          <div><strong>白名单模式</strong><span>仅名单内 Emby 用户可登录。</span></div>
-        </div>
-        <div class="emby-policy-mode" :class="{ 'is-active': config.allow_mode === 'blacklist' }">
-          <v-icon icon="mdi-account-cancel-outline" size="18" />
-          <div><strong>黑名单模式</strong><span>仅拦截名单内用户，其他用户可登录。</span></div>
-        </div>
+      <div class="text-body-2 text-medium-emphasis mt-1 mb-3">
+        {{ keyword || statusFilter !== 'all' ? '可尝试调整筛选条件或清空搜索词' : '点击右上角「新建账号」创建首个媒体库用户' }}
       </div>
-    </section>
-
-    <section class="emby-directory">
-      <div class="emby-directory__header">
-        <div>
-          <div class="emby-section-kicker">USER DIRECTORY</div>
-          <div class="emby-directory__title">
-            <h3>用户目录</h3>
-            <span>{{ filteredUsers.length }} / {{ users.length }}</span>
-          </div>
-        </div>
-        <v-text-field
-          v-model="keyword"
-          class="emby-user-search"
-          prepend-inner-icon="mdi-magnify"
-          placeholder="搜索 Emby 用户名"
-          density="compact"
-          variant="outlined"
-          hide-details
-          clearable
-          rounded="lg"
-        />
-      </div>
-      <div class="emby-filter-row" role="group" aria-label="用户状态筛选">
-        <button
-          v-for="item in [
-            { value: 'all', label: '全部用户', count: users.length },
-            { value: 'allowed', label: '允许登录', count: users.filter(u => u.access_status === 'allowed').length },
-            { value: 'blocked', label: '准入拦截', count: users.filter(u => u.access_status === 'blocked').length },
-            { value: 'disabled', label: '已禁用', count: users.filter(u => u.access_status === 'disabled').length },
-            { value: 'registered', label: '已登录 MP', count: stats.mp_registered_count },
-          ]"
-          :key="item.value"
-          type="button"
-          class="emby-filter-chip"
-          :class="{ 'is-active': statusFilter === item.value }"
-          @click="statusFilter = item.value as 'all' | 'allowed' | 'blocked' | 'disabled' | 'registered'"
-        >
-          {{ item.label }}<span>{{ item.count }}</span>
-        </button>
-      </div>
-    </section>
-
-    <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-4" rounded />
-
-    <div v-if="!loading && filteredUsers.length === 0" class="emby-empty-state">
-      <div class="emby-empty-state__icon"><v-icon icon="mdi-account-search-outline" size="34" /></div>
-      <h3>{{ keyword || statusFilter !== 'all' ? '没有匹配的用户' : '还没有 Emby 用户' }}</h3>
-      <p>{{ keyword || statusFilter !== 'all' ? '尝试更换搜索词或筛选条件。' : '创建第一个账号，开始配置登录准入与媒体库权限。' }}</p>
       <v-btn
         v-if="!keyword && statusFilter === 'all'"
+        size="small"
         color="primary"
         variant="tonal"
         rounded="lg"
@@ -807,100 +775,134 @@ onMounted(() => {
         :disabled="servers.length === 0"
         @click="openCreateDialog"
       >
-        新建 Emby 账号
+        新建账号
       </v-btn>
-      <v-btn v-else variant="text" rounded="lg" @click="keyword = ''; statusFilter = 'all'">清除筛选</v-btn>
+      <v-btn
+        v-else
+        size="small"
+        variant="tonal"
+        rounded="lg"
+        @click="
+          keyword = '';
+          statusFilter = 'all'
+        "
+      >
+        重置筛选
+      </v-btn>
     </div>
 
-    <div v-else class="emby-user-grid">
+    <!-- 3. 紧凑三段式用户卡片网格 -->
+    <div v-else class="emby-grid">
       <article
         v-for="user in filteredUsers"
         :key="user.username"
-        class="emby-user-card"
-        :class="`emby-user-card--${user.access_status}`"
+        class="emby-card"
+        :class="`emby-card--${user.access_status}`"
       >
-        <div class="emby-user-card__top">
-          <div class="emby-user-identity">
-            <v-avatar class="emby-user-avatar" color="primary" variant="tonal" size="44">
-              <span>{{ user.username.slice(0, 1).toUpperCase() }}</span>
-            </v-avatar>
-            <div class="emby-user-identity__text">
-              <div class="emby-user-name-row">
-                <h4>{{ user.username }}</h4>
-                <v-icon v-if="user.emby_is_admin" icon="mdi-crown-outline" color="warning" size="16" title="Emby 管理员" />
-              </div>
-              <div class="emby-user-server">
-                <v-icon icon="mdi-server-outline" size="13" />
-                {{ user.emby_servers.length ? user.emby_servers.join('、') : '仅本地记录' }}
-              </div>
+        <!-- 上段：头像、用户名、服务器摘要、准入状态 -->
+        <div class="emby-card__head">
+          <div class="emby-card__avatar">
+            {{ user.username.slice(0, 1).toUpperCase() }}
+          </div>
+
+          <div class="emby-card__identity">
+            <div class="emby-card__name-line">
+              <span class="emby-card__name" :title="user.username">{{ user.username }}</span>
+              <v-icon
+                v-if="user.emby_is_admin"
+                icon="mdi-crown-outline"
+                color="warning"
+                size="15"
+                title="Emby 管理员"
+              />
+              <span v-if="user.in_whitelist" class="emby-chip is-success">白名单</span>
+              <span v-if="user.in_blacklist" class="emby-chip is-error">黑名单</span>
+              <span v-if="user.registered_in_mp" class="emby-chip is-info">MP</span>
+            </div>
+            <div class="emby-card__meta" :title="userMetaSummary(user)">
+              {{ userMetaSummary(user) }}
             </div>
           </div>
-          <span class="emby-status-pill" :class="`is-${user.access_status}`">
-            <span />{{ statusLabel(user.access_status) }}
+
+          <span class="emby-status" :class="`is-${user.access_status}`">
+            <i />{{ statusLabel(user.access_status) }}
           </span>
         </div>
 
-        <div class="emby-user-badges">
-          <span v-if="user.emby_is_admin" class="emby-mini-badge is-warning">Emby 管理员</span>
-          <span v-if="user.emby_is_disabled" class="emby-mini-badge is-error">Emby 已停用</span>
-          <span v-if="user.registered_in_mp" class="emby-mini-badge is-info">已登录 MP</span>
-          <span v-if="user.in_whitelist" class="emby-mini-badge is-success">白名单</span>
-          <span v-if="user.in_blacklist" class="emby-mini-badge is-error">黑名单</span>
-          <span v-if="!user.emby_is_admin && !user.emby_is_disabled && !user.registered_in_mp && !user.in_whitelist && !user.in_blacklist" class="emby-mini-badge">普通账号</span>
+        <!-- 中段：订阅计数（点击看明细） + 最近活跃 -->
+        <div class="emby-card__stats">
+          <button type="button" class="emby-card__subs" @click="openUserSubscribes(user)">
+            <v-icon icon="mdi-movie-open-outline" size="14" />
+            <span>电影 <b>{{ user.movie_sub_count }}</b></span>
+            <span class="emby-dot">·</span>
+            <span>剧集 <b>{{ user.tv_sub_count }}</b></span>
+            <v-icon icon="mdi-chevron-right" size="15" class="ms-auto text-disabled" />
+          </button>
+
+          <div class="emby-card__active" :title="user.last_activity_date || user.last_login_date || ''">
+            <v-icon icon="mdi-clock-outline" size="13" />
+            <span>{{ formatCompactTime(user.last_activity_date || user.last_login_date) }}</span>
+          </div>
         </div>
 
-        <div class="emby-user-facts">
-          <div><v-icon icon="mdi-folder-play-outline" size="15" /><span>{{ folderSummaryText(user) }}</span></div>
-          <div><v-icon :icon="user.has_password ? 'mdi-lock-check-outline' : 'mdi-lock-open-variant-outline'" size="15" /><span>{{ user.has_password ? '已设置密码' : '未设置密码' }}</span></div>
-          <div class="emby-user-facts__wide"><v-icon icon="mdi-clock-outline" size="15" /><span>最近活跃 {{ formatDateText(user.last_activity_date || user.last_login_date) }}</span></div>
-        </div>
-
-        <button type="button" class="emby-subscribe-summary" @click="openUserSubscribes(user)">
-          <span><v-icon icon="mdi-movie-open-outline" size="16" />电影 <strong>{{ user.movie_sub_count }}</strong></span>
-          <span><v-icon icon="mdi-television" size="16" />剧集 <strong>{{ user.tv_sub_count }}</strong></span>
-          <v-icon icon="mdi-chevron-right" size="18" />
-        </button>
-
-        <div class="emby-user-card__actions">
+        <!-- 下段：快捷操作栏 -->
+        <div class="emby-card__footer">
           <v-btn
             v-if="user.emby_servers.length > 0"
-            size="small"
+            size="x-small"
             color="primary"
             variant="tonal"
             rounded="lg"
+            class="px-3"
             prepend-icon="mdi-account-edit-outline"
             @click="openEditDialog(user)"
           >
             编辑
           </v-btn>
           <v-btn
-            size="small"
+            size="x-small"
             :color="user.is_active ? 'warning' : 'success'"
             variant="tonal"
             rounded="lg"
+            class="px-3"
             :prepend-icon="user.is_active ? 'mdi-account-cancel-outline' : 'mdi-account-check-outline'"
             @click="toggleUserActive(user)"
           >
             {{ user.is_active ? '禁登 MP' : '允许 MP' }}
           </v-btn>
+
           <v-spacer />
+
           <v-menu location="bottom end" close-on-content-click>
             <template #activator="{ props: menuProps }">
-              <v-btn v-bind="menuProps" icon="mdi-dots-horizontal" variant="text" size="small" aria-label="更多用户操作" />
+              <v-btn
+                v-bind="menuProps"
+                icon="mdi-dots-horizontal"
+                variant="text"
+                size="x-small"
+                rounded="lg"
+                aria-label="更多操作"
+              />
             </template>
-            <v-list density="compact" class="emby-user-menu" rounded="lg">
-              <v-list-item prepend-icon="mdi-playlist-check" @click="updateAccessList(user, 'whitelist', user.in_whitelist ? 'remove' : 'add')">
+            <v-list density="compact" rounded="lg" class="py-1 emby-menu-list">
+              <v-list-item
+                prepend-icon="mdi-playlist-check"
+                @click="updateAccessList(user, 'whitelist', user.in_whitelist ? 'remove' : 'add')"
+              >
                 <v-list-item-title>{{ user.in_whitelist ? '移出白名单' : '加入白名单' }}</v-list-item-title>
               </v-list-item>
-              <v-list-item prepend-icon="mdi-account-cancel-outline" @click="updateAccessList(user, 'blacklist', user.in_blacklist ? 'remove' : 'add')">
+              <v-list-item
+                prepend-icon="mdi-account-cancel-outline"
+                @click="updateAccessList(user, 'blacklist', user.in_blacklist ? 'remove' : 'add')"
+              >
                 <v-list-item-title>{{ user.in_blacklist ? '移出黑名单' : '加入黑名单' }}</v-list-item-title>
               </v-list-item>
               <v-list-item prepend-icon="mdi-format-list-bulleted" @click="openUserSubscribes(user)">
-                <v-list-item-title>查看订阅明细</v-list-item-title>
+                <v-list-item-title>查看订阅明细 ({{ user.total_sub_count }})</v-list-item-title>
               </v-list-item>
               <v-divider class="my-1" />
               <v-list-item class="text-error" prepend-icon="mdi-delete-outline" @click="openDeleteUserDialog(user)">
-                <v-list-item-title>删除账号或清理订阅</v-list-item-title>
+                <v-list-item-title>删除账号 / 清理订阅</v-list-item-title>
               </v-list-item>
             </v-list>
           </v-menu>
@@ -909,14 +911,16 @@ onMounted(() => {
     </div>
 
     <!-- 新建 Emby 账号弹窗 -->
-    <v-dialog v-model="createDialog" max-width="620" scrollable>
+    <v-dialog v-model="createDialog" max-width="600" scrollable>
       <v-card class="emby-dialog">
-        <v-card-title class="emby-dialog__title d-flex align-center justify-space-between">
-          <span>新建 Emby 媒体服务器账号</span>
-          <v-btn icon="mdi-close" variant="text" size="small" @click="createDialog = false" />
+        <v-card-title class="emby-dialog__header">
+          <span class="d-flex align-center ga-2">
+            <v-icon icon="mdi-account-plus-outline" size="20" color="primary" />
+            <span>新建 Emby 账号</span>
+          </span>
+          <v-btn icon="mdi-close" variant="text" size="small" rounded="lg" @click="createDialog = false" />
         </v-card-title>
-        <v-divider />
-        <v-card-text v-if="!createdCredential" class="emby-dialog__content d-flex flex-column gap-3 pt-4">
+        <v-card-text v-if="!createdCredential" class="emby-dialog__body">
           <v-select
             v-if="servers.length > 1"
             v-model="createForm.server"
@@ -931,7 +935,7 @@ onMounted(() => {
             <v-col cols="12" sm="6">
               <v-text-field
                 v-model="createForm.username"
-                label="Emby 用户名 *"
+                label="用户名 *"
                 placeholder="例如：alice"
                 variant="outlined"
                 density="compact"
@@ -942,7 +946,7 @@ onMounted(() => {
               <v-text-field
                 v-model="createForm.password"
                 :type="showCreatePassword ? 'text' : 'password'"
-                label="初始密码（留空则随机生成）"
+                label="初始密码（留空随机生成）"
                 variant="outlined"
                 density="compact"
                 hide-details
@@ -954,71 +958,57 @@ onMounted(() => {
 
           <v-select
             v-model="createForm.copy_from_user_id"
-            :items="[{ id: '', name: '不复制（按下方自定义权限配置）' }, ...createTemplateUsers]"
+            :items="[{ id: '', name: '自定义权限配置' }, ...createTemplateUsers]"
             item-title="name"
             item-value="id"
-            label="从现有用户复制权限配置（可选）"
+            label="复制现有用户权限（可选）"
             variant="outlined"
             density="compact"
             hide-details
           />
 
           <template v-if="!createForm.copy_from_user_id">
-            <v-divider class="my-1" />
-            <div class="text-subtitle-2 font-weight-bold">Emby 账号权限与媒体库授权</div>
-
+            <div class="emby-dialog__subhead">权限与媒体库授权</div>
             <v-row dense>
-              <v-col cols="12" sm="6">
-                <v-switch
-                  v-model="createForm.is_admin"
-                  color="primary"
-                  density="compact"
-                  label="设为 Emby 管理员"
-                  hide-details
-                />
+              <v-col cols="6">
+                <v-switch v-model="createForm.is_admin" color="primary" density="compact" label="Emby 管理员" hide-details />
               </v-col>
-              <v-col cols="12" sm="6">
-                <v-switch
-                  v-model="createForm.is_hidden"
-                  color="primary"
-                  density="compact"
-                  label="在登录界面隐藏此账号"
-                  hide-details
-                />
+              <v-col cols="6">
+                <v-switch v-model="createForm.is_hidden" color="primary" density="compact" label="登录页隐藏" hide-details />
               </v-col>
-              <v-col cols="12" sm="6">
+              <v-col cols="6">
                 <v-switch
                   v-model="createForm.enable_remote_access"
                   color="primary"
                   density="compact"
-                  label="允许外网远程连接"
+                  label="允许外网连接"
                   hide-details
                 />
               </v-col>
-              <v-col cols="12" sm="6">
+              <v-col cols="6">
                 <v-switch
                   v-model="createForm.enable_downloading"
                   color="primary"
                   density="compact"
-                  label="允许下载媒体文件"
+                  label="允许下载媒体"
                   hide-details
                 />
               </v-col>
-              <v-col cols="12" sm="6">
+              <v-col cols="6">
                 <v-switch
                   v-model="createForm.enable_video_transcoding"
                   color="primary"
                   density="compact"
-                  label="允许视频播放转码"
+                  label="允许视频转码"
                   hide-details
                 />
               </v-col>
-              <v-col cols="12" sm="6">
+              <v-col cols="6">
                 <v-switch
                   v-model="createForm.enable_audio_transcoding"
                   color="primary"
                   density="compact"
-                  label="允许音频播放转码"
+                  label="允许音频转码"
                   hide-details
                 />
               </v-col>
@@ -1028,7 +1018,7 @@ onMounted(() => {
               v-model.number="createForm.simultaneous_stream_limit"
               type="number"
               min="0"
-              label="最大同时播放流数量限制（0 表示不限制）"
+              label="最大并发播放流数（0 为不限）"
               variant="outlined"
               density="compact"
               hide-details
@@ -1036,16 +1026,15 @@ onMounted(() => {
 
             <v-switch
               v-model="createForm.enable_all_folders"
-              color="success"
+              color="primary"
               density="compact"
-              label="允许访问所有媒体库"
+              label="允许访问全部媒体库"
               hide-details
             />
 
-            <v-card v-if="!createForm.enable_all_folders" variant="outlined" class="pa-3">
-              <div class="text-caption text-medium-emphasis mb-2">勾选允许该用户访问的媒体库：</div>
+            <v-card v-if="!createForm.enable_all_folders" variant="outlined" rounded="lg" class="pa-3 emby-subcard">
               <div v-if="createServerFolders.length === 0" class="text-caption text-medium-emphasis">
-                未读取到媒体库文件夹列表
+                未读取到媒体库列表
               </div>
               <v-row v-else dense>
                 <v-col v-for="folder in createServerFolders" :key="folder.id" cols="6" sm="4">
@@ -1061,58 +1050,60 @@ onMounted(() => {
             </v-card>
           </template>
 
-          <v-divider class="my-1" />
           <v-checkbox
             v-model="createForm.add_to_whitelist"
-            color="success"
+            color="primary"
             density="compact"
-            label="同时将该用户加入 MoviePilot 登录白名单"
+            label="同时加入 MoviePilot 登录白名单"
             hide-details
           />
         </v-card-text>
-        <v-card-text v-else class="pt-4">
-          <v-alert type="success" variant="tonal" icon="mdi-key-check-outline">
-            <template #title>账号 {{ createdCredential.username }} 创建成功</template>
-            <div class="mb-3">初始密码已随机生成，请立即复制并妥善保管：</div>
+        <v-card-text v-else class="emby-dialog__body">
+          <v-alert type="success" variant="tonal" rounded="lg" icon="mdi-check-circle-outline">
+            <div class="font-weight-bold mb-1">账号 {{ createdCredential.username }} 创建成功</div>
+            <div class="text-body-2 mb-3">请复制并保存自动生成的初始密码：</div>
             <v-text-field
               :model-value="createdCredential.password"
-              label="随机生成的初始密码"
+              label="初始密码"
               readonly
               variant="outlined"
               density="compact"
+              hide-details
               append-inner-icon="mdi-content-copy"
-              @click:append-inner="navigator.clipboard?.writeText(createdCredential?.password || '')"
+              @click:append-inner="copyPasswordText(createdCredential?.password)"
             />
           </v-alert>
         </v-card-text>
-        <v-divider />
-        <v-card-actions class="justify-end pa-4">
+        <v-card-actions class="emby-dialog__footer">
+          <v-spacer />
           <template v-if="!createdCredential">
-            <v-btn variant="text" @click="createDialog = false">取消</v-btn>
-            <v-btn color="primary" variant="flat" :loading="creatingUser" @click="submitCreateUser">
+            <v-btn variant="text" rounded="lg" @click="createDialog = false">取消</v-btn>
+            <v-btn color="primary" variant="flat" rounded="lg" class="px-5" :loading="creatingUser" @click="submitCreateUser">
               创建账号
             </v-btn>
           </template>
-          <v-btn v-else color="primary" variant="flat" @click="createDialog = false">完成</v-btn>
+          <v-btn v-else color="primary" variant="flat" rounded="lg" class="px-5" @click="createDialog = false">完成</v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
 
     <!-- 编辑 Emby 账号弹窗 -->
-    <v-dialog v-model="editDialog" max-width="640" scrollable>
+    <v-dialog v-model="editDialog" max-width="620" scrollable>
       <v-card class="emby-dialog">
-        <v-card-title class="emby-dialog__title d-flex align-center justify-space-between">
-          <span>编辑 Emby 账号：{{ editForm.username }}</span>
-          <v-btn icon="mdi-close" variant="text" size="small" @click="editDialog = false" />
+        <v-card-title class="emby-dialog__header">
+          <span class="d-flex align-center ga-2">
+            <v-icon icon="mdi-account-edit-outline" size="20" color="primary" />
+            <span>编辑账号：{{ editForm.username }}</span>
+          </span>
+          <v-btn icon="mdi-close" variant="text" size="small" rounded="lg" @click="editDialog = false" />
         </v-card-title>
-        <v-divider />
         <v-progress-linear v-if="editLoading" indeterminate color="primary" />
-        <v-card-text class="emby-dialog__content d-flex flex-column gap-3 pt-4">
+        <v-card-text class="emby-dialog__body">
           <v-select
             v-if="editTargetUser && editTargetUser.emby_servers.length > 1"
             :model-value="editForm.server"
             :items="editTargetUser.emby_servers"
-            label="当前编辑的 Emby 服务器实例"
+            label="Emby 服务器实例"
             variant="outlined"
             density="compact"
             hide-details
@@ -1121,126 +1112,93 @@ onMounted(() => {
 
           <v-text-field
             v-model="editForm.new_username"
-            label="Emby 用户名"
+            label="Emby 用户名（改名将同步迁移本地订阅）"
             variant="outlined"
             density="compact"
-            hint="修改用户名会自动同步迁移本地订阅归属"
-            persistent-hint
+            hide-details
           />
 
-          <section class="emby-password-panel" :class="{ 'is-editing': editForm.change_password }">
-            <div class="emby-password-panel__header">
-              <div class="emby-password-panel__intro">
-                <div class="emby-password-panel__icon">
-                  <v-icon icon="mdi-key-outline" size="19" />
-                </div>
-                <div>
-                  <strong>登录密码</strong>
-                  <span>仅在需要修改或清空密码时开启</span>
-                </div>
-              </div>
+          <div class="emby-pwd-box">
+            <div class="d-flex align-center justify-space-between">
+              <span class="d-flex align-center ga-2 text-body-2 font-weight-medium">
+                <v-icon icon="mdi-key-outline" size="17" color="primary" />
+                重置登录密码
+              </span>
+              <v-switch v-model="editForm.change_password" color="primary" density="compact" hide-details />
+            </div>
+            <v-text-field
+              v-if="editForm.change_password"
+              v-model="editForm.new_password"
+              :type="showEditPassword ? 'text' : 'password'"
+              label="新密码（留空将清除密码改为免密）"
+              variant="outlined"
+              density="compact"
+              hide-details
+              class="mt-2"
+              :append-inner-icon="showEditPassword ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
+              @click:append-inner="showEditPassword = !showEditPassword"
+            />
+          </div>
+
+          <div class="emby-dialog__subhead">状态与权限</div>
+          <v-row dense>
+            <v-col cols="6">
               <v-switch
-                v-model="editForm.change_password"
-                class="emby-password-panel__switch"
-                color="warning"
+                v-model="editForm.mp_is_active"
+                color="primary"
                 density="compact"
-                label="修改密码"
+                label="允许登录 MP"
                 hide-details
               />
-            </div>
-            <div v-if="editForm.change_password" class="emby-password-panel__form">
-              <v-text-field
-                v-model="editForm.new_password"
-                :type="showEditPassword ? 'text' : 'password'"
-                label="新密码"
-                placeholder="输入新密码"
-                variant="outlined"
-                density="compact"
-                hint="留空将清除现有密码，并允许该账号免密登录"
-                persistent-hint
-                :append-inner-icon="showEditPassword ? 'mdi-eye-off-outline' : 'mdi-eye-outline'"
-                @click:append-inner="showEditPassword = !showEditPassword"
-              />
-            </div>
-            <div v-else class="emby-password-panel__status">
-              <v-icon icon="mdi-lock-check-outline" size="15" />
-              当前密码保持不变
-            </div>
-          </section>
-
-          <v-divider class="my-1" />
-          <div class="text-subtitle-2 font-weight-bold">账号状态与权限策略</div>
-
-          <v-row dense>
-            <v-col cols="12" sm="6">
+            </v-col>
+            <v-col cols="6">
               <v-switch
                 v-model="editForm.is_disabled"
                 color="error"
                 density="compact"
-                label="在 Emby 中禁用此账号"
+                label="Emby 禁用此号"
                 hide-details
               />
             </v-col>
-            <v-col cols="12" sm="6">
-              <v-switch
-                v-model="editForm.mp_is_active"
-                color="success"
-                density="compact"
-                label="允许登录 MoviePilot 订阅"
-                hide-details
-              />
+            <v-col cols="6">
+              <v-switch v-model="editForm.is_admin" color="primary" density="compact" label="Emby 管理员" hide-details />
             </v-col>
-            <v-col cols="12" sm="6">
-              <v-switch
-                v-model="editForm.is_admin"
-                color="primary"
-                density="compact"
-                label="Emby 管理员权限"
-                hide-details
-              />
+            <v-col cols="6">
+              <v-switch v-model="editForm.is_hidden" color="primary" density="compact" label="登录页隐藏" hide-details />
             </v-col>
-            <v-col cols="12" sm="6">
-              <v-switch
-                v-model="editForm.is_hidden"
-                color="primary"
-                density="compact"
-                label="在 Emby 登录界面隐藏"
-                hide-details
-              />
-            </v-col>
-            <v-col cols="12" sm="6">
+            <v-col cols="6">
               <v-switch
                 v-model="editForm.enable_remote_access"
                 color="primary"
                 density="compact"
-                label="允许外网远程连接"
+                label="允许外网连接"
                 hide-details
               />
             </v-col>
-            <v-col cols="12" sm="6">
+            <v-col cols="6">
               <v-switch
                 v-model="editForm.enable_downloading"
                 color="primary"
                 density="compact"
-                label="允许下载媒体文件"
+                label="允许下载媒体"
                 hide-details
               />
             </v-col>
-            <v-col cols="12" sm="6">
+            <v-col cols="6">
               <v-switch
                 v-model="editForm.enable_video_transcoding"
                 color="primary"
                 density="compact"
-                label="允许视频播放转码"
+                label="允许视频转码"
                 hide-details
               />
             </v-col>
-            <v-col cols="12" sm="6">
+            <v-col cols="6">
               <v-switch
                 v-model="editForm.enable_audio_transcoding"
                 color="primary"
                 density="compact"
-                label="允许音频播放转码"
+                label="允许音频转码"
                 hide-details
               />
             </v-col>
@@ -1250,27 +1208,23 @@ onMounted(() => {
             v-model.number="editForm.simultaneous_stream_limit"
             type="number"
             min="0"
-            label="最大同时播放流数量限制（0 表示不限制）"
+            label="最大并发播放流数（0 为不限）"
             variant="outlined"
             density="compact"
             hide-details
           />
 
-          <v-divider class="my-1" />
-          <div class="text-subtitle-2 font-weight-bold">媒体库访问范围</div>
-
           <v-switch
             v-model="editForm.enable_all_folders"
-            color="success"
+            color="primary"
             density="compact"
-            label="允许访问所有媒体库"
+            label="允许访问全部媒体库"
             hide-details
           />
 
-          <v-card v-if="!editForm.enable_all_folders" variant="outlined" class="pa-3">
-            <div class="text-caption text-medium-emphasis mb-2">勾选允许访问的媒体库：</div>
+          <v-card v-if="!editForm.enable_all_folders" variant="outlined" rounded="lg" class="pa-3 emby-subcard">
             <div v-if="editServerFolders.length === 0" class="text-caption text-medium-emphasis">
-              未读取到媒体库文件夹列表
+              未读取到媒体库列表
             </div>
             <v-row v-else dense>
               <v-col v-for="folder in editServerFolders" :key="folder.id" cols="6" sm="4">
@@ -1285,10 +1239,10 @@ onMounted(() => {
             </v-row>
           </v-card>
         </v-card-text>
-        <v-divider />
-        <v-card-actions class="justify-end pa-4">
-          <v-btn variant="text" @click="editDialog = false">取消</v-btn>
-          <v-btn color="primary" variant="flat" :loading="savingEdit" @click="submitEditUser">
+        <v-card-actions class="emby-dialog__footer">
+          <v-spacer />
+          <v-btn variant="text" rounded="lg" @click="editDialog = false">取消</v-btn>
+          <v-btn color="primary" variant="flat" rounded="lg" class="px-5" :loading="savingEdit" @click="submitEditUser">
             保存修改
           </v-btn>
         </v-card-actions>
@@ -1296,99 +1250,100 @@ onMounted(() => {
     </v-dialog>
 
     <!-- 准入策略设置弹窗 -->
-    <v-dialog v-model="settingsDialog" max-width="560">
+    <v-dialog v-model="settingsDialog" max-width="540" scrollable>
       <v-card class="emby-dialog">
-        <v-card-title class="emby-dialog__title d-flex align-center justify-space-between">
-          <span>MoviePilot 登录准入策略设置</span>
-          <v-btn icon="mdi-close" variant="text" size="small" @click="settingsDialog = false" />
+        <v-card-title class="emby-dialog__header">
+          <span class="d-flex align-center ga-2">
+            <v-icon icon="mdi-shield-lock-outline" size="20" color="primary" />
+            <span>MoviePilot 登录准入策略</span>
+          </span>
+          <v-btn icon="mdi-close" variant="text" size="small" rounded="lg" @click="settingsDialog = false" />
         </v-card-title>
-        <v-divider />
-        <v-card-text class="emby-dialog__content d-flex flex-column gap-3">
-          <div class="emby-dialog-note">
-            <v-icon icon="mdi-information-outline" size="18" />
-            <div>
-              <strong>名单仅控制 MoviePilot 登录，不影响 Emby 媒体库权限。</strong>
-              <span>全部模式不读取名单；白名单仅放行；黑名单仅拦截。禁用插件后不再执行名单准入。</span>
-            </div>
-          </div>
-          <v-switch
-            v-model="config.enabled"
-            color="primary"
-            label="启用 Emby 用户管理与准入拦截"
-            hide-details
-          />
+        <v-card-text class="emby-dialog__body">
+          <v-alert type="info" variant="tonal" density="compact" rounded="lg" class="text-caption">
+            仅控制谁能使用 Emby 账号登录 MoviePilot 发起订阅，不影响 Emby 自身观影权限。
+          </v-alert>
+          <v-switch v-model="config.enabled" color="primary" density="compact" label="启用登录准入控制" hide-details />
           <v-switch
             v-model="config.allow_emby_admin"
             color="primary"
-            label="允许 Emby 管理员账号作为普通订阅用户登录"
+            density="compact"
+            label="允许 Emby 管理员作为普通订阅用户登录"
             hide-details
           />
           <v-select
             v-model="config.allow_mode"
             :items="[
-              { title: '全部允许（除黑名单/禁用账号外均可登录）', value: 'all' },
-              { title: '白名单模式（仅白名单中的 Emby 用户可登录）', value: 'whitelist' },
-              { title: '黑名单模式（拦截黑名单中的 Emby 用户）', value: 'blacklist' },
+              { title: '全部允许（未禁用账号均可登录）', value: 'all' },
+              { title: '白名单模式（仅白名单可登录）', value: 'whitelist' },
+              { title: '黑名单模式（拦截黑名单用户）', value: 'blacklist' },
             ]"
             item-title="title"
             item-value="value"
-            label="登录准入模式"
+            label="准入模式"
             variant="outlined"
             density="compact"
+            hide-details
           />
           <v-select
             v-model="config.allowed_servers"
             :items="servers.map(s => s.name)"
-            label="允许登录的 Emby 服务器（留空表示全部已启用实例）"
+            label="限定 Emby 实例（留空为全部）"
             variant="outlined"
             density="compact"
             multiple
             chips
             clearable
+            hide-details
           />
           <v-textarea
             v-model="whitelistInput"
-            label="白名单用户名（多个用户名用逗号或换行分隔）"
+            label="白名单用户名（逗号或换行分隔）"
             variant="outlined"
             rows="2"
             density="compact"
+            hide-details
           />
           <v-textarea
             v-model="blacklistInput"
-            label="黑名单用户名（多个用户名用逗号或换行分隔）"
+            label="黑名单用户名（逗号或换行分隔）"
             variant="outlined"
             rows="2"
             density="compact"
+            hide-details
           />
         </v-card-text>
-        <v-card-actions class="justify-end pa-4">
-          <v-btn variant="text" @click="settingsDialog = false">取消</v-btn>
-          <v-btn color="primary" variant="flat" :loading="savingConfig" @click="savePolicyConfig">
-            保存设置
+        <v-card-actions class="emby-dialog__footer">
+          <v-spacer />
+          <v-btn variant="text" rounded="lg" @click="settingsDialog = false">取消</v-btn>
+          <v-btn color="primary" variant="flat" rounded="lg" class="px-5" :loading="savingConfig" @click="savePolicyConfig">
+            保存策略
           </v-btn>
         </v-card-actions>
       </v-card>
     </v-dialog>
 
     <!-- 用户订阅明细弹窗 -->
-    <v-dialog v-model="subDialog" max-width="640">
+    <v-dialog v-model="subDialog" max-width="600" scrollable>
       <v-card class="emby-dialog">
-        <v-card-title class="emby-dialog__title d-flex align-center justify-space-between">
-          <span>{{ subDialogUser }} 的订阅记录 ({{ userSubscribes.length }})</span>
-          <v-btn icon="mdi-close" variant="text" size="small" @click="subDialog = false" />
+        <v-card-title class="emby-dialog__header">
+          <span class="d-flex align-center ga-2">
+            <v-icon icon="mdi-playlist-star" size="20" color="primary" />
+            <span>{{ subDialogUser }} 的订阅 ({{ userSubscribes.length }})</span>
+          </span>
+          <v-btn icon="mdi-close" variant="text" size="small" rounded="lg" @click="subDialog = false" />
         </v-card-title>
-        <v-divider />
-        <v-card-text>
-          <v-progress-linear v-if="subDialogLoading" indeterminate color="primary" class="mb-3" />
-          <div v-else-if="userSubscribes.length === 0" class="text-center py-6 text-medium-emphasis">
+        <v-card-text class="pa-3">
+          <v-progress-linear v-if="subDialogLoading" indeterminate color="primary" class="mb-2" />
+          <div v-else-if="userSubscribes.length === 0" class="text-center py-6 text-medium-emphasis text-body-2">
             该用户暂无订阅记录
           </div>
-          <v-list v-else lines="two" density="comfortable">
-            <v-list-item v-for="sub in userSubscribes" :key="sub.id">
+          <v-list v-else lines="two" density="compact">
+            <v-list-item v-for="sub in userSubscribes" :key="sub.id" rounded="lg">
               <template #prepend>
                 <v-icon
                   :icon="sub.type === '电影' ? 'mdi-movie-open-outline' : 'mdi-television'"
-                  :color="sub.type === '电影' ? 'success' : 'warning'"
+                  :color="sub.type === '电影' ? 'success' : 'info'"
                 />
               </template>
               <v-list-item-title class="font-weight-medium">
@@ -1397,7 +1352,7 @@ onMounted(() => {
                 <span v-if="sub.season" class="text-caption ms-1">S{{ sub.season }}</span>
               </v-list-item-title>
               <v-list-item-subtitle>
-                类型：{{ sub.type }} · 状态：{{ sub.state || 'R' }} · 订阅时间：{{ sub.date || '-' }}
+                {{ sub.type }} · 状态 {{ sub.state || 'R' }} · {{ sub.date || '-' }}
               </v-list-item-subtitle>
             </v-list-item>
           </v-list>
@@ -1406,40 +1361,44 @@ onMounted(() => {
     </v-dialog>
 
     <!-- 删除用户确认弹窗 -->
-    <v-dialog v-model="deleteDialog" max-width="480">
+    <v-dialog v-model="deleteDialog" max-width="460">
       <v-card class="emby-dialog">
-        <v-card-title class="text-error">删除用户：{{ deleteTargetUser?.username }}</v-card-title>
-        <v-divider />
-        <v-card-text class="emby-dialog__content d-flex flex-column gap-2 pt-4">
-          <div class="text-body-2 mb-1">
-            请选择要对用户 <strong>{{ deleteTargetUser?.username }}</strong> 执行的清理范围：
-          </div>
+        <v-card-title class="emby-dialog__header text-error">
+          <span class="d-flex align-center ga-2">
+            <v-icon icon="mdi-alert-circle-outline" size="20" color="error" />
+            <span>删除用户：{{ deleteTargetUser?.username }}</span>
+          </span>
+          <v-btn icon="mdi-close" variant="text" size="small" rounded="lg" @click="deleteDialog = false" />
+        </v-card-title>
+        <v-card-text class="emby-dialog__body">
+          <div class="text-body-2 text-medium-emphasis">勾选需要清理的范围：</div>
           <v-checkbox
             v-if="deleteTargetUser && deleteTargetUser.emby_servers.length > 0"
             v-model="deleteFromEmby"
             color="error"
             density="compact"
-            :label="`从 Emby 媒体服务器 (${deleteTargetUser.emby_servers.join('、')}) 彻底删除该账号`"
+            :label="`从 Emby (${deleteTargetUser.emby_servers.join('、')}) 删除该账号`"
             hide-details
           />
           <v-checkbox
             v-model="deleteMpUser"
-            color="warning"
+            color="error"
             density="compact"
-            label="移除 MoviePilot 本地账号与个人配置记录"
+            label="移除 MoviePilot 本地账号记录"
             hide-details
           />
           <v-checkbox
             v-model="deleteWithSubscribes"
             color="error"
             density="compact"
-            :label="`同时清理该用户名下的全部影视订阅 (${deleteTargetUser?.total_sub_count || 0} 条)`"
+            :label="`清理名下全部影视订阅 (${deleteTargetUser?.total_sub_count || 0} 条)`"
             hide-details
           />
         </v-card-text>
-        <v-card-actions class="justify-end pa-4">
-          <v-btn variant="text" @click="deleteDialog = false">取消</v-btn>
-          <v-btn color="error" variant="flat" :loading="deletingUser" @click="confirmDeleteUser">
+        <v-card-actions class="emby-dialog__footer">
+          <v-spacer />
+          <v-btn variant="text" rounded="lg" @click="deleteDialog = false">取消</v-btn>
+          <v-btn color="error" variant="flat" rounded="lg" class="px-5" :loading="deletingUser" @click="confirmDeleteUser">
             确认删除
           </v-btn>
         </v-card-actions>
@@ -1449,744 +1408,468 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.emby-user-manager {
+.emby-page {
   width: 100%;
-  max-width: 1480px;
-  margin: 0 auto;
-  padding: 24px;
+  max-width: none;
+  margin: 0;
+  padding: 2px 0 16px;
   color: rgba(var(--v-theme-on-surface), var(--v-high-emphasis-opacity));
 }
 
-.emby-hero {
-  position: relative;
+.emby-page :deep(.v-field) {
+  border-radius: 8px;
+}
+
+/* 1. 紧凑顶栏 */
+.emby-topbar {
   display: flex;
-  overflow: hidden;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 24px;
-  padding: 28px;
-  border: 1px solid rgba(var(--v-theme-primary), 0.14);
-  border-radius: 24px;
-  background:
-    radial-gradient(circle at 90% 10%, rgba(var(--v-theme-info), 0.14), transparent 36%),
-    linear-gradient(135deg, rgba(var(--v-theme-primary), 0.12), rgba(var(--v-theme-surface), 0.94) 62%);
-}
-
-.emby-hero::after {
-  position: absolute;
-  width: 180px;
-  height: 180px;
-  border: 1px solid rgba(var(--v-theme-primary), 0.1);
-  border-radius: 50%;
-  content: '';
-  inset-block-start: -92px;
-  inset-inline-end: 18%;
-  pointer-events: none;
-}
-
-.emby-hero__copy,
-.emby-hero__actions {
-  position: relative;
-  z-index: 1;
-}
-
-.emby-eyebrow,
-.emby-section-kicker {
-  display: flex;
-  align-items: center;
-  color: rgba(var(--v-theme-primary), 0.88);
-  font-size: 11px;
-  font-weight: 700;
-  gap: 7px;
-  letter-spacing: 0.14em;
-}
-
-.emby-live-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: rgb(var(--v-theme-success));
-  box-shadow: 0 0 0 4px rgba(var(--v-theme-success), 0.12);
-}
-
-.emby-hero__title {
-  display: flex;
-  align-items: center;
-  margin-block-start: 14px;
-  gap: 14px;
-}
-
-.emby-hero__icon {
-  display: grid;
-  width: 54px;
-  height: 54px;
-  flex: 0 0 auto;
-  border: 1px solid rgba(var(--v-theme-primary), 0.18);
-  border-radius: 16px;
-  background: rgba(var(--v-theme-primary), 0.12);
-  color: rgb(var(--v-theme-primary));
-  place-items: center;
-}
-
-.emby-hero h2 {
-  margin: 0;
-  font-size: clamp(24px, 3vw, 30px);
-  font-weight: 750;
-  letter-spacing: -0.03em;
-  line-height: 1.2;
-}
-
-.emby-hero__title p {
-  margin: 5px 0 0;
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  font-size: 13px;
-}
-
-.emby-hero__tags {
-  display: flex;
-  flex-wrap: wrap;
-  margin-block-start: 18px;
-  gap: 8px;
-}
-
-.emby-soft-tag {
-  display: inline-flex;
-  align-items: center;
-  padding: 6px 10px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-  border-radius: 999px;
-  background: rgba(var(--v-theme-surface), 0.58);
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  font-size: 11px;
-  gap: 5px;
-}
-
-.emby-soft-tag.is-success {
-  border-color: rgba(var(--v-theme-success), 0.18);
-  background: rgba(var(--v-theme-success), 0.1);
-  color: rgb(var(--v-theme-success));
-}
-
-.emby-hero__actions {
-  display: flex;
-  flex: 0 0 auto;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-}
-
-.emby-primary-action {
-  box-shadow: 0 8px 22px rgba(var(--v-theme-primary), 0.2);
-}
-
-.emby-metrics {
-  display: grid;
-  margin-block: 18px;
   gap: 12px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 12px;
 }
 
-.emby-metric {
+.emby-topbar__left {
   display: flex;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
-  align-items: center;
-  padding: 18px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.07);
-  border-radius: 18px;
-  background: rgba(var(--v-theme-surface), 0.82);
-  gap: 14px;
-  transition: border-color 160ms ease, transform 160ms ease;
 }
 
-.emby-metric:hover {
-  border-color: rgba(var(--v-theme-primary), 0.2);
-  transform: translateY(-1px);
-}
-
-.emby-metric__icon {
+.emby-topbar__icon {
   display: grid;
-  width: 42px;
-  height: 42px;
-  flex: 0 0 auto;
-  border-radius: 13px;
   place-items: center;
-}
-
-.emby-metric--primary .emby-metric__icon { background: rgba(var(--v-theme-primary), 0.12); color: rgb(var(--v-theme-primary)); }
-.emby-metric--success .emby-metric__icon { background: rgba(var(--v-theme-success), 0.12); color: rgb(var(--v-theme-success)); }
-.emby-metric--info .emby-metric__icon { background: rgba(var(--v-theme-info), 0.12); color: rgb(var(--v-theme-info)); }
-.emby-metric--warning .emby-metric__icon { background: rgba(var(--v-theme-warning), 0.12); color: rgb(var(--v-theme-warning)); }
-
-.emby-metric__label {
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  font-size: 12px;
-}
-
-.emby-metric__value {
-  margin-block: 1px;
-  font-size: 26px;
-  font-weight: 750;
-  line-height: 1.2;
-}
-
-.emby-metric__hint {
-  overflow: hidden;
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.emby-policy-guide {
-  display: grid;
-  align-items: center;
-  padding: 18px 20px;
-  border: 1px solid rgba(var(--v-theme-info), 0.12);
-  border-radius: 18px;
-  background: linear-gradient(110deg, rgba(var(--v-theme-info), 0.07), rgba(var(--v-theme-surface), 0.78));
-  gap: 18px;
-  grid-template-columns: minmax(240px, 0.8fr) minmax(0, 1.5fr);
-}
-
-.emby-policy-guide__heading {
-  display: flex;
-  align-items: flex-start;
-  gap: 11px;
-}
-
-.emby-policy-guide__icon {
-  display: grid;
-  width: 38px;
-  height: 38px;
-  flex: 0 0 auto;
-  border-radius: 12px;
-  background: rgba(var(--v-theme-info), 0.12);
-  color: rgb(var(--v-theme-info));
-  place-items: center;
-}
-
-.emby-policy-guide h3,
-.emby-directory h3 {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 700;
-}
-
-.emby-policy-guide__heading p {
-  margin: 4px 0 0;
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  font-size: 11px;
-  line-height: 1.55;
-}
-
-.emby-policy-guide__modes {
-  display: grid;
-  gap: 8px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.emby-policy-mode {
-  display: flex;
-  min-width: 0;
-  align-items: flex-start;
-  padding: 10px;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  gap: 7px;
-}
-
-.emby-policy-mode.is-active {
-  border-color: rgba(var(--v-theme-primary), 0.16);
-  background: rgba(var(--v-theme-primary), 0.08);
-  color: rgb(var(--v-theme-primary));
-}
-
-.emby-policy-mode strong,
-.emby-policy-mode span {
-  display: block;
-}
-
-.emby-policy-mode strong {
-  margin-block-end: 2px;
-  font-size: 11px;
-}
-
-.emby-policy-mode span {
-  font-size: 10px;
-  line-height: 1.45;
-}
-
-.emby-directory {
-  padding: 24px 2px 14px;
-}
-
-.emby-directory__header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.emby-section-kicker {
-  margin-block-end: 5px;
-  font-size: 9px;
-}
-
-.emby-directory__title {
-  display: flex;
-  align-items: baseline;
-  gap: 9px;
-}
-
-.emby-directory__title h3 {
-  font-size: 19px;
-}
-
-.emby-directory__title span {
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  font-size: 11px;
-}
-
-.emby-user-search {
-  width: 280px;
-  max-width: 100%;
-  flex: 0 0 auto;
-}
-
-.emby-filter-row {
-  display: flex;
-  overflow-x: auto;
-  margin-block-start: 14px;
-  padding-block-end: 2px;
-  gap: 7px;
-  scrollbar-width: none;
-}
-
-.emby-filter-row::-webkit-scrollbar { display: none; }
-
-.emby-filter-chip {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  padding: 7px 11px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-  border-radius: 999px;
-  background: transparent;
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  cursor: pointer;
-  font: inherit;
-  font-size: 11px;
-  gap: 7px;
-  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
-}
-
-.emby-filter-chip span {
-  display: grid;
-  min-width: 18px;
-  height: 18px;
-  padding-inline: 4px;
-  border-radius: 999px;
-  background: rgba(var(--v-theme-on-surface), 0.06);
-  font-size: 10px;
-  place-items: center;
-}
-
-.emby-filter-chip:hover,
-.emby-filter-chip.is-active {
-  border-color: rgba(var(--v-theme-primary), 0.2);
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  border: 1px solid rgba(var(--v-theme-primary), 0.16);
   background: rgba(var(--v-theme-primary), 0.1);
   color: rgb(var(--v-theme-primary));
 }
 
-.emby-filter-chip.is-active span { background: rgba(var(--v-theme-primary), 0.14); }
-
-.emby-user-grid {
-  display: grid;
-  gap: 14px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-
-.emby-user-card {
-  position: relative;
+.emby-topbar__title-row {
   display: flex;
-  overflow: hidden;
-  min-width: 0;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.emby-topbar h2 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.emby-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 9px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  border-radius: 999px;
+  background: rgb(var(--v-theme-surface));
+  color: rgba(var(--v-theme-on-surface), 0.72);
+  font-size: 11.5px;
+  font-weight: 500;
+}
+
+.emby-tag--clickable {
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+
+.emby-tag--clickable:hover {
+  border-color: rgba(var(--v-theme-on-surface), 0.16);
+}
+
+.emby-tag.is-active {
+  border-color: rgba(var(--v-theme-success), 0.24);
+  background: rgba(var(--v-theme-success), 0.09);
+  color: rgb(var(--v-theme-success));
+}
+
+.emby-topbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 2. IDE 分段胶囊筛选与搜索工具条 */
+.emby-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.emby-toolbar__left {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.emby-pills {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 9px;
+  background: rgba(var(--v-theme-on-surface), 0.04);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+}
+
+.emby-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(var(--v-theme-on-surface), 0.64);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.35;
+  cursor: pointer;
+  transition:
+    color 0.15s ease,
+    background-color 0.15s ease,
+    border-color 0.15s ease;
+}
+
+.emby-pill strong {
+  padding: 0 5px;
+  border-radius: 999px;
+  background: rgba(var(--v-theme-on-surface), 0.06);
+  color: rgba(var(--v-theme-on-surface), 0.66);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+}
+
+.emby-pill:hover {
+  color: rgba(var(--v-theme-on-surface), 0.88);
+  background: rgba(var(--v-theme-on-surface), 0.03);
+}
+
+.emby-pill.is-active {
+  border-color: rgba(var(--v-theme-on-surface), 0.1);
+  background: rgb(var(--v-theme-surface));
+  color: rgba(var(--v-theme-on-surface), var(--v-high-emphasis-opacity));
+  font-weight: 600;
+}
+
+.emby-pill.is-active strong {
+  background: rgba(var(--v-theme-primary), 0.12);
+  color: rgb(var(--v-theme-primary));
+}
+
+.emby-sub-counter {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  border-radius: 999px;
+  background: rgba(var(--v-theme-on-surface), 0.03);
+  color: rgba(var(--v-theme-on-surface), 0.76);
+  font-size: 12px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.emby-sub-counter :deep(.v-icon) {
+  color: rgb(var(--v-theme-warning));
+}
+
+.emby-search {
+  width: 240px;
+  max-width: 100%;
+  flex: 0 1 240px;
+}
+
+/* 空状态 */
+.emby-empty {
+  display: flex;
   flex-direction: column;
-  padding: 18px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.075);
-  border-radius: 20px;
-  background: rgba(var(--v-theme-surface), 0.88);
-  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+  align-items: center;
+  justify-content: center;
+  padding: 44px 20px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  border-radius: 12px;
+  background: rgb(var(--v-theme-surface));
+  text-align: center;
+  transition: border-color 0.16s ease;
 }
 
-.emby-user-card::before {
-  position: absolute;
-  height: 3px;
-  background: rgb(var(--v-theme-primary));
-  content: '';
-  inset: 0 0 auto;
-  opacity: 0.7;
+.emby-empty:hover {
+  border-color: rgba(var(--v-theme-on-surface), 0.16);
 }
 
-.emby-user-card--blocked::before { background: rgb(var(--v-theme-warning)); }
-.emby-user-card--disabled::before { background: rgb(var(--v-theme-error)); }
-
-.emby-user-card:hover {
-  border-color: rgba(var(--v-theme-primary), 0.2);
-  box-shadow: 0 12px 34px rgba(0, 0, 0, 0.08);
-  transform: translateY(-2px);
+/* 3. 三段式用户卡片网格 */
+.emby-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(296px, 1fr));
+  gap: 12px;
 }
 
-.emby-user-card__top {
+.emby-card {
+  display: flex;
+  flex-direction: column;
+  padding: 14px 15px 12px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  border-radius: 12px;
+  background: rgb(var(--v-theme-surface));
+  box-shadow: none;
+  gap: 11px;
+  transition: border-color 0.16s ease;
+}
+
+.emby-card:hover {
+  border-color: rgba(var(--v-theme-on-surface), 0.16);
+  box-shadow: none;
+}
+
+.emby-card--disabled {
+  opacity: 0.78;
+}
+
+.emby-card__head {
   display: flex;
   align-items: flex-start;
-  justify-content: space-between;
   gap: 10px;
 }
 
-.emby-user-identity {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 11px;
-}
-
-.emby-user-avatar {
-  flex: 0 0 auto;
-  border: 1px solid rgba(var(--v-theme-primary), 0.14);
-  font-size: 17px;
-  font-weight: 750;
-}
-
-.emby-user-identity__text { min-width: 0; }
-
-.emby-user-name-row {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 5px;
-}
-
-.emby-user-name-row h4 {
-  overflow: hidden;
-  margin: 0;
-  font-size: 16px;
+.emby-card__avatar {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: 8px;
+  background: rgba(var(--v-theme-primary), 0.12);
+  color: rgb(var(--v-theme-primary));
+  font-size: 14px;
   font-weight: 700;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
-.emby-user-server {
+.emby-card__identity {
+  flex: 1;
+  min-width: 0;
+}
+
+.emby-card__name-line {
   display: flex;
-  overflow: hidden;
+  flex-wrap: wrap;
   align-items: center;
-  margin-block-start: 4px;
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  font-size: 10px;
-  gap: 4px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.emby-status-pill {
-  display: inline-flex;
-  flex: 0 0 auto;
-  align-items: center;
-  padding: 5px 8px;
-  border-radius: 999px;
-  font-size: 10px;
-  font-weight: 600;
   gap: 5px;
 }
 
-.emby-status-pill > span {
-  width: 5px;
-  height: 5px;
+.emby-card__name {
+  overflow: hidden;
+  font-size: 14.5px;
+  font-weight: 700;
+  line-height: 1.3;
+  max-width: 140px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emby-chip {
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 10.5px;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.emby-chip.is-success {
+  background: rgba(var(--v-theme-success), 0.12);
+  color: rgb(var(--v-theme-success));
+}
+
+.emby-chip.is-error {
+  background: rgba(var(--v-theme-error), 0.12);
+  color: rgb(var(--v-theme-error));
+}
+
+.emby-chip.is-info {
+  background: rgba(var(--v-theme-info), 0.12);
+  color: rgb(var(--v-theme-info));
+}
+
+.emby-card__meta {
+  overflow: hidden;
+  margin-top: 2px;
+  color: rgba(var(--v-theme-on-surface), 0.58);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.emby-status {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.emby-status i {
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: currentColor;
 }
 
-.emby-status-pill.is-allowed { background: rgba(var(--v-theme-success), 0.1); color: rgb(var(--v-theme-success)); }
-.emby-status-pill.is-blocked { background: rgba(var(--v-theme-warning), 0.12); color: rgb(var(--v-theme-warning)); }
-.emby-status-pill.is-disabled { background: rgba(var(--v-theme-error), 0.1); color: rgb(var(--v-theme-error)); }
-
-.emby-user-badges {
-  display: flex;
-  min-height: 22px;
-  flex-wrap: wrap;
-  margin-block: 12px 10px;
-  gap: 5px;
+.emby-status.is-allowed {
+  background: rgba(var(--v-theme-success), 0.12);
+  color: rgb(var(--v-theme-success));
 }
 
-.emby-mini-badge {
-  padding: 3px 7px;
-  border-radius: 6px;
-  background: rgba(var(--v-theme-on-surface), 0.055);
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  font-size: 9px;
+.emby-status.is-blocked {
+  background: rgba(var(--v-theme-warning), 0.13);
+  color: rgb(var(--v-theme-warning));
+}
+
+.emby-status.is-disabled {
+  background: rgba(var(--v-theme-error), 0.12);
+  color: rgb(var(--v-theme-error));
+}
+
+/* 中段指标栏 */
+.emby-card__stats {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.06);
+  border-radius: 8px;
+  background: rgba(var(--v-theme-on-surface), 0.03);
+}
+
+.emby-card__subs {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  gap: 5px;
+  border: none;
+  background: transparent;
+  color: rgba(var(--v-theme-on-surface), 0.82);
+  font-size: 12px;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.emby-card__subs:hover {
+  color: rgb(var(--v-theme-primary));
+}
+
+.emby-card__subs b {
+  font-variant-numeric: tabular-nums;
+}
+
+.emby-dot {
+  opacity: 0.45;
+}
+
+.emby-card__active {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  color: rgba(var(--v-theme-on-surface), 0.54);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 底栏动作 */
+.emby-card__footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.emby-menu-list {
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  box-shadow: none !important;
+}
+
+/* 弹窗统一样式（Antigravity IDE 14px + 50px 紧凑顶栏） */
+.emby-dialog {
+  border-radius: 14px !important;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  background: rgb(var(--v-theme-surface));
+  box-shadow: none !important;
+  overflow: hidden;
+}
+
+.emby-dialog :deep(.v-field) {
+  border-radius: 8px;
+}
+
+.emby-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 50px;
+  height: 50px;
+  padding: 0 18px;
+  font-size: 15px;
+  font-weight: 600;
+  border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+}
+
+.emby-dialog__body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+}
+
+.emby-dialog__subhead {
+  margin-top: 2px;
+  color: rgb(var(--v-theme-primary));
+  font-size: 13px;
   font-weight: 600;
 }
 
-.emby-mini-badge.is-warning { background: rgba(var(--v-theme-warning), 0.1); color: rgb(var(--v-theme-warning)); }
-.emby-mini-badge.is-error { background: rgba(var(--v-theme-error), 0.09); color: rgb(var(--v-theme-error)); }
-.emby-mini-badge.is-info { background: rgba(var(--v-theme-info), 0.1); color: rgb(var(--v-theme-info)); }
-.emby-mini-badge.is-success { background: rgba(var(--v-theme-success), 0.1); color: rgb(var(--v-theme-success)); }
-
-.emby-user-facts {
-  display: grid;
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  font-size: 10px;
-  gap: 8px 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.emby-user-facts > div {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 5px;
-}
-
-.emby-user-facts > div > span {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.emby-user-facts__wide { grid-column: 1 / -1; }
-
-.emby-subscribe-summary {
-  display: flex;
-  width: 100%;
-  align-items: center;
-  justify-content: space-between;
-  margin-block: 15px 12px;
+.emby-pwd-box,
+.emby-subcard {
   padding: 10px 12px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.06);
-  border-radius: 12px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08) !important;
+  border-radius: 8px;
   background: rgba(var(--v-theme-on-surface), 0.025);
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  cursor: pointer;
-  font: inherit;
-  font-size: 11px;
-  gap: 10px;
-  text-align: start;
-  transition: background 140ms ease, border-color 140ms ease;
 }
 
-.emby-subscribe-summary:hover {
-  border-color: rgba(var(--v-theme-primary), 0.14);
-  background: rgba(var(--v-theme-primary), 0.06);
-}
-
-.emby-subscribe-summary > span {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.emby-subscribe-summary strong {
-  color: rgba(var(--v-theme-on-surface), var(--v-high-emphasis-opacity));
-  font-size: 13px;
-}
-
-.emby-user-card__actions {
-  display: flex;
-  align-items: center;
-  margin-block-start: auto;
-  padding-block-start: 12px;
-  border-block-start: 1px solid rgba(var(--v-theme-on-surface), 0.055);
-  gap: 6px;
-}
-
-.emby-empty-state {
-  display: flex;
-  min-height: 300px;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  padding: 36px;
-  border: 1px dashed rgba(var(--v-theme-on-surface), 0.12);
-  border-radius: 20px;
-  text-align: center;
-}
-
-.emby-empty-state__icon {
-  display: grid;
-  width: 64px;
-  height: 64px;
-  margin-block-end: 14px;
-  border-radius: 20px;
-  background: rgba(var(--v-theme-primary), 0.09);
-  color: rgb(var(--v-theme-primary));
-  place-items: center;
-}
-
-.emby-empty-state h3 { margin: 0; font-size: 17px; }
-.emby-empty-state p { margin: 7px 0 18px; color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity)); font-size: 12px; }
-
-.emby-dialog {
-  overflow: hidden;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-  border-radius: 22px !important;
+.emby-dialog__footer {
+  padding: 10px 18px 12px;
   background: rgb(var(--v-theme-surface));
-  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.2) !important;
+  border-top: 1px solid rgba(var(--v-theme-on-surface), 0.08);
 }
 
-.emby-dialog__title {
-  min-height: 64px;
-  padding: 18px 22px !important;
-  font-size: 17px !important;
-  font-weight: 700;
-}
+@media (max-width: 600px) {
+  .emby-page {
+    padding: 4px 4px 14px;
+  }
 
-.emby-dialog__content {
-  padding: 20px 22px !important;
-}
-
-.emby-password-panel {
-  padding: 14px 16px;
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
-  border-radius: 14px;
-  background: rgba(var(--v-theme-on-surface), 0.025);
-  transition: border-color 150ms ease, background 150ms ease;
-}
-
-.emby-password-panel.is-editing {
-  border-color: rgba(var(--v-theme-warning), 0.22);
-  background: rgba(var(--v-theme-warning), 0.045);
-}
-
-.emby-password-panel__header {
-  display: flex;
-  min-height: 36px;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.emby-password-panel__intro {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  gap: 10px;
-}
-
-.emby-password-panel__icon {
-  display: grid;
-  width: 34px;
-  height: 34px;
-  flex: 0 0 auto;
-  border-radius: 10px;
-  background: rgba(var(--v-theme-warning), 0.1);
-  color: rgb(var(--v-theme-warning));
-  place-items: center;
-}
-
-.emby-password-panel__intro strong,
-.emby-password-panel__intro span {
-  display: block;
-}
-
-.emby-password-panel__intro strong {
-  font-size: 13px;
-  font-weight: 650;
-}
-
-.emby-password-panel__intro span {
-  margin-block-start: 2px;
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  font-size: 10px;
-}
-
-.emby-password-panel__switch {
-  flex: 0 0 auto;
-}
-
-.emby-password-panel__form {
-  margin-block-start: 14px;
-  padding-block-start: 14px;
-  border-block-start: 1px solid rgba(var(--v-theme-warning), 0.1);
-}
-
-.emby-password-panel__form :deep(.v-messages) {
-  min-height: 18px;
-  font-size: 10px;
-  line-height: 1.5;
-}
-
-.emby-password-panel__status {
-  display: flex;
-  align-items: center;
-  margin-block-start: 4px;
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-  font-size: 10px;
-  gap: 5px;
-}
-
-.emby-dialog-note {
-  display: flex;
-  align-items: flex-start;
-  padding: 12px;
-  border: 1px solid rgba(var(--v-theme-info), 0.12);
-  border-radius: 12px;
-  background: rgba(var(--v-theme-info), 0.07);
-  color: rgb(var(--v-theme-info));
-  gap: 8px;
-}
-
-.emby-dialog-note strong,
-.emby-dialog-note span {
-  display: block;
-  font-size: 11px;
-  line-height: 1.55;
-}
-
-.emby-dialog-note span {
-  margin-block-start: 3px;
-  color: rgba(var(--v-theme-on-surface), var(--v-medium-emphasis-opacity));
-}
-
-.emby-user-menu { min-width: 190px; }
-
-@media (max-width: 1180px) {
-  .emby-user-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .emby-policy-guide { grid-template-columns: 1fr; }
-}
-
-@media (max-width: 900px) {
-  .emby-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .emby-hero { align-items: flex-start; flex-direction: column; }
-  .emby-hero__actions { justify-content: flex-start; }
-}
-
-@media (max-width: 640px) {
-  .emby-user-manager { padding: 12px; }
-  .emby-hero { padding: 20px; border-radius: 20px; }
-  .emby-hero__title { align-items: flex-start; }
-  .emby-hero__icon { width: 44px; height: 44px; border-radius: 13px; }
-  .emby-hero__title p { font-size: 11px; line-height: 1.5; }
-  .emby-hero__actions { width: 100%; }
-  .emby-hero__actions .v-btn:not(.v-btn--icon) { flex: 1 1 auto; }
-  .emby-metric { padding: 13px; gap: 10px; }
-  .emby-metric__icon { width: 34px; height: 34px; border-radius: 10px; }
-  .emby-metric__value { font-size: 22px; }
-  .emby-metric__hint { display: none; }
-  .emby-policy-guide { padding: 15px; }
-  .emby-policy-guide__modes { grid-template-columns: 1fr; }
-  .emby-policy-mode { padding: 8px; }
-  .emby-directory__header { align-items: stretch; flex-direction: column; }
-  .emby-user-search { width: 100%; }
-  .emby-user-grid { grid-template-columns: 1fr; }
-  .emby-user-card { padding: 16px; }
-  .emby-user-card__top { gap: 7px; }
-  .emby-status-pill { padding: 4px 6px; font-size: 9px; }
-  .emby-dialog__title { padding: 16px !important; }
-  .emby-dialog__content { padding: 16px !important; }
-  .emby-password-panel { padding: 12px; }
-  .emby-password-panel__header { align-items: flex-start; flex-wrap: wrap; gap: 8px; }
-  .emby-password-panel__switch { margin-inline-start: 44px; }
+  .emby-search {
+    width: 100%;
+    flex: 1 1 100%;
+  }
 }
 </style>

@@ -14,8 +14,8 @@
 
 | 插件 | 版本 | 说明 |
 |------|------|------|
-| [Emby 用户管理](plugins.v2/embyusermanager) | v1.2.3 | 管理 Emby 媒体服务器账号增删改查、登录准入黑白名单及用户订阅数据 |
-| [保种删种管家](plugins.v2/seedcleaner) | v1.1.2 | 多维条件与正则清理规则、模拟干跑预览、磁盘低水位应急保盘，支持 qBittorrent 与 Transmission |
+| [Emby 用户管理](plugins.v2/embyusermanager) | v1.2.4 | 管理 Emby 媒体服务器账号增删改查、登录准入黑白名单及用户订阅数据 |
+| [保种删种管家](plugins.v2/seedcleaner) | v1.1.3 | 多维条件与正则清理规则、模拟干跑预览、磁盘低水位应急保盘，支持 qBittorrent 与 Transmission |
 
 ## 目录结构
 

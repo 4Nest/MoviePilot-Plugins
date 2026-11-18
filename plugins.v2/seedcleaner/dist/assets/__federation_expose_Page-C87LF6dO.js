@@ -1,5 +1,5 @@
 import { importShared } from './__federation_fn_import-JrT3xvdd.js';
-import AppPage from './__federation_expose_AppPage-D0-Dxynf.js';
+import AppPage from './__federation_expose_AppPage-BSEA7YrZ.js';
 
 const {defineComponent:_defineComponent} = await importShared('vue');
 
@@ -7,14 +7,8 @@ const {openBlock:_openBlock,createBlock:_createBlock} = await importShared('vue'
 const _sfc_main = /* @__PURE__ */ _defineComponent({
   __name: "Page",
   props: {
-    api: {
-      type: Object,
-      default: () => ({})
-    },
-    pluginId: {
-      type: String,
-      default: "EmbyUserManager"
-    }
+    api: { type: Object, default: () => ({}) },
+    pluginId: { type: String, default: "SeedCleaner" }
   },
   emits: ["action", "switch", "close"],
   setup(__props, { emit: __emit }) {
