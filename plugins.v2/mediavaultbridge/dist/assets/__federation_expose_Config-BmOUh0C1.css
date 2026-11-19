@@ -1,0 +1,89 @@
+
+.mv-cfg[data-v-f37d56fd] {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.mv-cfg__tabs[data-v-f37d56fd] {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 9px;
+  background: rgba(var(--v-theme-on-surface), 0.04);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  align-self: flex-start;
+}
+.mv-cfg__tab[data-v-f37d56fd] {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  border: none;
+  border-radius: 7px;
+  background: transparent;
+  color: rgba(var(--v-theme-on-surface), 0.72);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.mv-cfg__tab.is-active[data-v-f37d56fd] {
+  background: rgb(var(--v-theme-surface));
+  color: rgb(var(--v-theme-on-surface));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+.mv-cfg__panel[data-v-f37d56fd] {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.mv-cfg__section[data-v-f37d56fd] {
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: rgb(var(--v-theme-surface));
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+}
+.mv-cfg__section-head[data-v-f37d56fd] {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.mv-cfg__section-title[data-v-f37d56fd] {
+  font-size: 14px;
+  font-weight: 600;
+  color: rgb(var(--v-theme-on-surface));
+}
+.mv-cfg__section-desc[data-v-f37d56fd] {
+  margin-top: 2px;
+  font-size: 12px;
+  color: rgba(var(--v-theme-on-surface), 0.62);
+}
+.mv-cfg__row[data-v-f37d56fd] {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.mv-cfg__test-bar[data-v-f37d56fd] {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+}
+.mv-cfg__test-msg[data-v-f37d56fd] {
+  font-size: 13px;
+}
+.mv-cfg__map-row[data-v-f37d56fd] {
+  padding: 10px;
+  border-radius: 10px;
+  background: rgba(var(--v-theme-on-surface), 0.025);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.06);
+  margin-top: 8px;
+}
+.mv-cfg__footer[data-v-f37d56fd] {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 4px;
+}

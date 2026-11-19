@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from app.plugins.embyusermanager import EmbyUserManager
+from app.plugins.mediavaultbridge import MediaVaultBridge
 from app.plugins.seedcleaner import SeedCleaner
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -24,8 +25,10 @@ def test_plugin_frontend_antigravity_design_and_icon_contract() -> None:
     seed_app = (REPO_ROOT / "frontend/seedcleaner/src/components/AppPage.vue").read_text(encoding="utf-8")
     seed_dry = (REPO_ROOT / "frontend/seedcleaner/src/components/DryRunPage.vue").read_text(encoding="utf-8")
     seed_cfg = (REPO_ROOT / "frontend/seedcleaner/src/components/Config.vue").read_text(encoding="utf-8")
+    mv_app = (REPO_ROOT / "frontend/mediavaultbridge/src/components/AppPage.vue").read_text(encoding="utf-8")
+    mv_cfg = (REPO_ROOT / "frontend/mediavaultbridge/src/components/Config.vue").read_text(encoding="utf-8")
 
-    all_vue_sources = [emby_app, emby_cfg, seed_app, seed_dry, seed_cfg]
+    all_vue_sources = [emby_app, emby_cfg, seed_app, seed_dry, seed_cfg, mv_app, mv_cfg]
 
     # 1. 零重阴影、常规按钮不再使用 rounded="pill"、分段胶囊不再使用高饱和主色实心底
     for src in all_vue_sources:
@@ -35,12 +38,15 @@ def test_plugin_frontend_antigravity_design_and_icon_contract() -> None:
 
     assert "background: rgb(var(--v-theme-primary))" not in emby_app
     assert "background: rgb(var(--v-theme-primary))" not in seed_app
+    assert "background: rgb(var(--v-theme-primary))" not in mv_app
 
     # 2. 外层页面消除居中限宽与横向缩进，严格对齐宿主流体左右基准线
     assert "padding: 2px 0 16px;" in _extract_css_block(emby_app, ".emby-page")
     assert "max-width: none;" in _extract_css_block(emby_app, ".emby-page")
     assert "padding: 2px 0 16px;" in _extract_css_block(seed_app, ".seed-page")
     assert "max-width: none;" in _extract_css_block(seed_app, ".seed-page")
+    assert "padding: 2px 0 16px;" in _extract_css_block(mv_app, ".mv-page")
+    assert "max-width: none;" in _extract_css_block(mv_app, ".mv-page")
 
     # 3. 卡片、表格容器、空状态框统一 12px 圆角与 0.08 极细描边
     for css_src, sel in [
@@ -51,6 +57,9 @@ def test_plugin_frontend_antigravity_design_and_icon_contract() -> None:
         (seed_app, ".seed-empty-box"),
         (seed_dry, ".dry-table-card"),
         (seed_dry, ".dry-empty-box"),
+        (mv_app, ".mv-card"),
+        (mv_app, ".mv-table-card"),
+        (mv_app, ".mv-empty-box"),
     ]:
         block = _extract_css_block(css_src, sel)
         assert "border-radius: 12px;" in block, f"{sel} 未对齐 12px 圆角"
@@ -60,6 +69,7 @@ def test_plugin_frontend_antigravity_design_and_icon_contract() -> None:
     for css_src, slot_sel, active_sel in [
         (emby_app, ".emby-pills", ".emby-pill.is-active"),
         (seed_app, ".seed-pills", ".seed-pill.is-active"),
+        (mv_app, ".mv-pills", ".mv-pill.is-active"),
     ]:
         slot_block = _extract_css_block(css_src, slot_sel)
         assert "padding: 3px;" in slot_block
@@ -73,6 +83,7 @@ def test_plugin_frontend_antigravity_design_and_icon_contract() -> None:
     for css_src, dlg_sel, hdr_sel in [
         (emby_app, ".emby-dialog", ".emby-dialog__header"),
         (seed_app, ".seed-dialog", ".seed-dialog__header"),
+        (mv_app, ".mv-dialog", ".mv-dialog__header"),
     ]:
         assert "14px" in _extract_css_block(css_src, dlg_sel)
         assert "50px" in _extract_css_block(css_src, hdr_sel)
@@ -93,11 +104,12 @@ def test_plugin_frontend_antigravity_design_and_icon_contract() -> None:
 def test_plugin_manifest_and_runtime_hygiene() -> None:
     """保留插件的键名、类名、版本号、Release 声明及运行目录结构必须完全一致且无源码残留。"""
     pkg = json.loads((REPO_ROOT / "package.v2.json").read_text(encoding="utf-8"))
-    assert set(pkg.keys()) == {"EmbyUserManager", "SeedCleaner"}
+    assert set(pkg.keys()) == {"EmbyUserManager", "SeedCleaner", "MediaVaultBridge"}
 
     expected = {
         "EmbyUserManager": (EmbyUserManager, "1.2.4"),
         "SeedCleaner": (SeedCleaner, "1.1.3"),
+        "MediaVaultBridge": (MediaVaultBridge, "1.0.0"),
     }
     for pid, (cls, ver) in expected.items():
         assert cls.__name__ == pid
@@ -120,5 +132,6 @@ def test_plugin_manifest_and_runtime_hygiene() -> None:
     readme_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     assert "v1.2.4" in readme_text
     assert "v1.1.3" in readme_text
+    assert "v1.0.0" in readme_text
     assert "bilibilinotify" not in readme_text.lower()
     assert "mediacovergenerator" not in readme_text.lower()

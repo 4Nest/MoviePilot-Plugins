@@ -32,6 +32,7 @@ for _mod_name in list(sys.modules):
         (
             "app.plugins.embyusermanager",
             "app.plugins.seedcleaner",
+            "app.plugins.mediavaultbridge",
         )
     ):
         sys.modules.pop(_mod_name, None)
