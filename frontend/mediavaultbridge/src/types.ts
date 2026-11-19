@@ -13,6 +13,15 @@ export interface PathMappingItem {
   enabled: boolean
 }
 
+export interface QuickPathPair {
+  id: string
+  name: string
+  source_dir: string
+  target_dir: string
+  storage?: string
+  auto?: boolean
+}
+
 export interface FailedUploadEvent {
   id: number
   file_name?: string

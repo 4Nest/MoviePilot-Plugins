@@ -44,11 +44,12 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         {
             "mp_prefix": "/media/link",
             "mv_cloud_prefix": "/media",
-            "mv_strm_prefix": "",
+            "mv_strm_prefix": "/media/strm",
             "storage": "115-default",
             "enabled": True,
         }
     ],
+    "quick_path_pairs": [],
     "upload_retry": {
         "enabled": True,
         "cron": "*/15 * * * *",
@@ -129,7 +130,7 @@ class MediaVaultBridge(_PluginBase):
         "删片联动清理、Emby 后处理、115 分享链转存与运维面板。"
     )
     plugin_icon = "cloud.png"
-    plugin_version = "1.1.0"
+    plugin_version = "1.2.0"
     plugin_author = "4Nest"
     author_url = "https://github.com/4Nest"
     plugin_label = "网盘,STRM,115,联动"
@@ -183,6 +184,28 @@ class MediaVaultBridge(_PluginBase):
                     if rule.mp_prefix or rule.mv_cloud_prefix:
                         mappings.append(rule.to_dict())
         merged["path_mappings"] = mappings
+
+        raw_pairs = merged.get("quick_path_pairs")
+        quick_pairs: List[Dict[str, Any]] = []
+        if isinstance(raw_pairs, list):
+            for idx, item in enumerate(raw_pairs):
+                if not isinstance(item, dict):
+                    continue
+                src = str(item.get("source_dir") or "").strip()
+                dst = str(item.get("target_dir") or "").strip()
+                if not src and not dst:
+                    continue
+                quick_pairs.append(
+                    {
+                        "id": str(item.get("id") or f"pair_{idx + 1}"),
+                        "name": str(item.get("name") or src or dst).strip(),
+                        "source_dir": src,
+                        "target_dir": dst,
+                        "storage": str(item.get("storage") or merged["default_storage"]).strip()
+                        or merged["default_storage"],
+                    }
+                )
+        merged["quick_path_pairs"] = quick_pairs
 
         ur = merged["upload_retry"]
         ur["enabled"] = bool(ur.get("enabled", True))
@@ -749,6 +772,13 @@ class MediaVaultBridge(_PluginBase):
                 "summary": "手动触发 MediaVault 运维动作",
             },
             {
+                "path": "/quick-paths",
+                "endpoint": self.api_save_quick_paths,
+                "methods": ["POST"],
+                "auth": "bear",
+                "summary": "保存常用运维路径对列表",
+            },
+            {
                 "path": "/share/parse",
                 "endpoint": self.api_share_parse,
                 "methods": ["POST"],
@@ -842,6 +872,7 @@ class MediaVaultBridge(_PluginBase):
         emby_thumbnail: Dict[str, Any] = {}
         emby_intro_skip: Dict[str, Any] = {}
         orphan_status: Dict[str, Any] = {}
+        suggested_path_pairs: List[Dict[str, Any]] = []
 
         def _safe(label: str, fn):
             try:
@@ -867,6 +898,32 @@ class MediaVaultBridge(_PluginBase):
                     storage=str(self._config.get("default_storage") or "115-default")
                 ),
             )
+            mc = _safe("监控规则", client.monitor_config)
+            seen_pairs = set()
+            for rule in (mc.get("rules") if isinstance(mc, dict) else []) or []:
+                if not isinstance(rule, dict):
+                    continue
+                cloud_dir = str(rule.get("target_dir") or "").strip()
+                strm_dir = str(rule.get("strm_dir") or "").strip()
+                if not rule.get("enabled") or not cloud_dir:
+                    continue
+                pair_key = (cloud_dir, strm_dir)
+                if pair_key in seen_pairs:
+                    continue
+                seen_pairs.add(pair_key)
+                label = str(rule.get("name") or "").strip() or (
+                    cloud_dir.rsplit("/", 1)[-1] if "/" in cloud_dir.strip("/") else "全库"
+                )
+                suggested_path_pairs.append(
+                    {
+                        "id": f"mv_{len(suggested_path_pairs) + 1}",
+                        "name": label,
+                        "source_dir": cloud_dir,
+                        "target_dir": strm_dir,
+                        "storage": str(rule.get("target_storage") or self._config.get("default_storage") or "115-default"),
+                        "auto": True,
+                    }
+                )
 
         return schemas.Response(
             success=True,
@@ -885,6 +942,7 @@ class MediaVaultBridge(_PluginBase):
                     "intro_skip": emby_intro_skip.get("stats") if isinstance(emby_intro_skip, dict) else {},
                 },
                 "orphan_status": orphan_status,
+                "suggested_path_pairs": suggested_path_pairs,
                 "config": copy.deepcopy(self._config),
             },
         )
@@ -992,6 +1050,26 @@ class MediaVaultBridge(_PluginBase):
         except Exception as err:
             self._append_log("upload_retry", "error", "手动重试上传任务失败", str(err))
             return schemas.Response(success=False, message=str(err))
+
+    def api_save_quick_paths(
+        self,
+        payload: Dict[str, Any] = Body(default_factory=dict),
+        _: User = Depends(get_current_admin),
+    ) -> schemas.Response:
+        """保存用户自定义的常用运维路径对列表。"""
+        pairs = payload.get("quick_path_pairs")
+        if not isinstance(pairs, list):
+            return schemas.Response(success=False, message="quick_path_pairs 参数格式无效")
+        next_cfg = copy.deepcopy(self._config)
+        next_cfg["quick_path_pairs"] = pairs
+        merged = self._merge_config(next_cfg)
+        self.update_config(merged)
+        self._config = merged
+        return schemas.Response(
+            success=True,
+            message="常用路径对已保存",
+            data=copy.deepcopy(merged["quick_path_pairs"]),
+        )
 
     def api_trigger_action(
         self,

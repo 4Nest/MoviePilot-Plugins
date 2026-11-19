@@ -5,6 +5,7 @@ import {
   type BridgeLogItem,
   type FailedUploadEvent,
   type HostToast,
+  type QuickPathPair,
   formatBytes,
 } from '../types'
 
@@ -42,7 +43,113 @@ const shareForm = reactive({
 const quickForm = reactive({
   source_dir: '',
   target_dir: '',
+  storage: '115-default',
 })
+const selectedPairId = ref('')
+const savePairDialog = ref(false)
+const newPairName = ref('')
+const savingPair = ref(false)
+
+const savedPathPairs = computed<QuickPathPair[]>(() => {
+  const list = config.value?.quick_path_pairs
+  return Array.isArray(list) ? list : []
+})
+
+const allPathPairs = computed<QuickPathPair[]>(() => {
+  const result: QuickPathPair[] = []
+  const seen = new Set<string>()
+  for (const item of savedPathPairs.value) {
+    const key = `${item.source_dir}|${item.target_dir}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      result.push({ ...item, auto: false })
+    }
+  }
+  const suggested = Array.isArray(overview.value?.suggested_path_pairs)
+    ? (overview.value.suggested_path_pairs as QuickPathPair[])
+    : []
+  for (const item of suggested) {
+    const key = `${item.source_dir}|${item.target_dir}`
+    if (!seen.has(key)) {
+      seen.add(key)
+      result.push({ ...item, auto: true })
+    }
+  }
+  return result
+})
+
+function selectPathPair(pair: QuickPathPair) {
+  selectedPairId.value = pair.id
+  quickForm.source_dir = pair.source_dir || ''
+  quickForm.target_dir = pair.target_dir || ''
+  quickForm.storage = pair.storage || config.value?.default_storage || '115-default'
+}
+
+function openSavePairDialog() {
+  if (!quickForm.source_dir.trim() && !quickForm.target_dir.trim()) {
+    notify('请先填写云盘源目录或 STRM 目标目录', 'warning')
+    return
+  }
+  const guess = quickForm.source_dir.trim().split('/').filter(Boolean).pop() || '自定义路径'
+  newPairName.value = guess
+  savePairDialog.value = true
+}
+
+async function saveCurrentPathPair() {
+  const name = newPairName.value.trim()
+  const src = quickForm.source_dir.trim()
+  const dst = quickForm.target_dir.trim()
+  if (!name || (!src && !dst)) {
+    notify('请填写名称和至少一个目录路径', 'warning')
+    return
+  }
+  savingPair.value = true
+  try {
+    const nextPairs: QuickPathPair[] = [
+      ...savedPathPairs.value,
+      {
+        id: `pair_${Date.now()}`,
+        name,
+        source_dir: src,
+        target_dir: dst,
+        storage: quickForm.storage || config.value?.default_storage || '115-default',
+      },
+    ]
+    const res: any = await props.api.post(`plugin/${props.pluginId}/quick-paths`, {
+      quick_path_pairs: nextPairs,
+    })
+    if (res?.success) {
+      config.value = { ...config.value, quick_path_pairs: res.data || nextPairs }
+      selectedPairId.value = nextPairs[nextPairs.length - 1].id
+      savePairDialog.value = false
+      notify('已保存为常用路径对', 'success')
+    } else {
+      notify(res?.message || '保存失败', 'error')
+    }
+  } catch (err: any) {
+    notify(err?.message || '保存常用路径对异常', 'error')
+  } finally {
+    savingPair.value = false
+  }
+}
+
+async function removeSavedPathPair(id: string) {
+  const nextPairs = savedPathPairs.value.filter(item => item.id !== id)
+  try {
+    const res: any = await props.api.post(`plugin/${props.pluginId}/quick-paths`, {
+      quick_path_pairs: nextPairs,
+    })
+    if (res?.success) {
+      config.value = { ...config.value, quick_path_pairs: res.data || nextPairs }
+      if (selectedPairId.value === id) {
+        selectedPairId.value = ''
+      }
+      notify('已移除常用路径对', 'success')
+    }
+  } catch (err: any) {
+    notify(err?.message || '移除失败', 'error')
+  }
+}
 
 const snackbar = reactive({ show: false, text: '', color: 'success' })
 
@@ -86,9 +193,13 @@ async function loadOverview() {
       overview.value = res.data
       if (res.data.config) {
         config.value = res.data.config
-        if (!quickForm.source_dir && res.data.config.path_mappings?.[0]) {
-          quickForm.source_dir = res.data.config.path_mappings[0].mv_cloud_prefix || ''
-          quickForm.target_dir = res.data.config.path_mappings[0].mv_strm_prefix || ''
+        if (!quickForm.source_dir && !quickForm.target_dir) {
+          if (allPathPairs.value.length > 0) {
+            selectPathPair(allPathPairs.value[0])
+          } else if (res.data.config.path_mappings?.[0]) {
+            quickForm.source_dir = res.data.config.path_mappings[0].mv_cloud_prefix || ''
+            quickForm.target_dir = res.data.config.path_mappings[0].mv_strm_prefix || ''
+          }
         }
         if (!shareForm.target_path && res.data.config.share_transfer?.default_target_path) {
           shareForm.target_path = res.data.config.share_transfer.default_target_path
@@ -424,108 +535,223 @@ onMounted(() => {
         </VCol>
       </VRow>
 
+      <!-- 目录级运维：常用路径对 + 4项目录动作 -->
       <div class="mv-card mt-3">
-        <div class="mv-section-title">快捷运维触发</div>
-        <VRow dense class="mt-2">
+        <div class="mv-ops-head">
+          <div>
+            <div class="mv-section-title">目录级快捷运维</div>
+            <div class="mv-subtitle">点击常用路径对一键切换（自动合并 MediaVault 启用监控规则），或微调后存为常用</div>
+          </div>
+          <VBtn
+            size="small"
+            variant="tonal"
+            color="primary"
+            prepend-icon="mdi-plus"
+            @click="openSavePairDialog"
+          >
+            存为常用
+          </VBtn>
+        </div>
+
+        <div v-if="allPathPairs.length" class="mv-pair-strip mt-3">
+          <div
+            v-for="pair in allPathPairs"
+            :key="pair.id"
+            class="mv-pair-chip"
+            :class="{ 'is-active': selectedPairId === pair.id }"
+            @click="selectPathPair(pair)"
+          >
+            <div class="mv-pair-chip__top">
+              <VIcon icon="mdi-folder-outline" size="15" />
+              <span class="mv-pair-chip__name">{{ pair.name }}</span>
+              <span v-if="pair.auto" class="mv-pair-chip__tag">MV</span>
+              <button
+                v-else
+                type="button"
+                class="mv-pair-chip__del"
+                title="移除常用路径对"
+                @click.stop="removeSavedPathPair(pair.id)"
+              >
+                <VIcon icon="mdi-close" size="13" />
+              </button>
+            </div>
+            <div class="mv-pair-chip__path">
+              {{ pair.source_dir || '-' }} → {{ pair.target_dir || '默认 STRM' }}
+            </div>
+          </div>
+        </div>
+
+        <VRow dense class="mt-3">
           <VCol cols="12" md="6">
             <VTextField
               v-model="quickForm.source_dir"
-              label="云盘源目录（用于增量 STRM / 孤立索引扫描）"
+              label="云盘源目录（115 网盘路径）"
               placeholder="/media"
               variant="outlined"
               density="compact"
               hide-details
+              @update:model-value="selectedPairId = ''"
             />
           </VCol>
           <VCol cols="12" md="6">
             <VTextField
               v-model="quickForm.target_dir"
-              label="STRM 目标目录（用于增量 STRM / 目录刮削 / 清理扫描）"
-              placeholder="/strm"
+              label="STRM 目标目录（本地 STRM 路径）"
+              placeholder="/media/strm"
               variant="outlined"
               density="compact"
               hide-details
+              @update:model-value="selectedPairId = ''"
             />
           </VCol>
         </VRow>
 
-        <div class="mv-action-grid mt-3">
-          <VBtn
-            size="small"
-            variant="tonal"
-            color="primary"
-            prepend-icon="mdi-play"
-            :loading="actionBusy === 'monitor_sync'"
-            @click="triggerAction('monitor_sync')"
+        <div class="mv-tile-grid mt-3">
+          <button
+            type="button"
+            class="mv-tile"
+            :disabled="actionBusy === 'strm_generate'"
+            @click="triggerAction('strm_generate', { source_dir: quickForm.source_dir, target_dir: quickForm.target_dir, storage: quickForm.storage })"
           >
-            监控增量同步
-          </VBtn>
-          <VBtn
-            size="small"
-            variant="tonal"
-            color="primary"
-            prepend-icon="mdi-folder-outline"
-            :loading="actionBusy === 'strm_generate'"
-            @click="triggerAction('strm_generate', { source_dir: quickForm.source_dir, target_dir: quickForm.target_dir })"
-          >
-            增量生成 STRM
-          </VBtn>
-          <VBtn
-            size="small"
-            variant="tonal"
-            prepend-icon="mdi-auto-fix"
-            :loading="actionBusy === 'scrape'"
+            <div class="mv-tile__icon">
+              <VIcon icon="mdi-folder-outline" size="18" color="primary" />
+            </div>
+            <div class="mv-tile__body">
+              <div class="mv-tile__title">{{ actionBusy === 'strm_generate' ? '生成中...' : '增量生成 STRM' }}</div>
+              <div class="mv-tile__desc">按当前云盘源目录生成到 STRM 目标目录</div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            class="mv-tile"
+            :disabled="actionBusy === 'scrape'"
             @click="triggerAction('scrape', { target_dir: quickForm.target_dir || quickForm.source_dir })"
           >
-            目录刮削
-          </VBtn>
-          <VBtn
-            size="small"
-            variant="tonal"
-            prepend-icon="mdi-broom"
-            :loading="actionBusy === 'cleanup_scan'"
-            @click="triggerAction('cleanup_scan', { source_dir: quickForm.source_dir, target_dir: quickForm.target_dir })"
+            <div class="mv-tile__icon">
+              <VIcon icon="mdi-auto-fix" size="18" color="primary" />
+            </div>
+            <div class="mv-tile__body">
+              <div class="mv-tile__title">{{ actionBusy === 'scrape' ? '刮削中...' : '目录刮削' }}</div>
+              <div class="mv-tile__desc">补齐当前 STRM 目录的元数据与图片</div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            class="mv-tile"
+            :disabled="actionBusy === 'cleanup_scan'"
+            @click="triggerAction('cleanup_scan', { source_dir: quickForm.source_dir, target_dir: quickForm.target_dir, storage: quickForm.storage })"
           >
-            失效 STRM 扫描
-          </VBtn>
-          <VBtn
-            size="small"
-            variant="tonal"
-            prepend-icon="mdi-database"
-            :loading="actionBusy === 'orphan_scan'"
-            @click="triggerAction('orphan_scan', { source_dir: quickForm.source_dir })"
+            <div class="mv-tile__icon">
+              <VIcon icon="mdi-broom" size="18" />
+            </div>
+            <div class="mv-tile__body">
+              <div class="mv-tile__title">{{ actionBusy === 'cleanup_scan' ? '扫描中...' : '失效 STRM 扫描' }}</div>
+              <div class="mv-tile__desc">比对云盘与 STRM 目录检测失效索引</div>
+            </div>
+          </button>
+
+          <button
+            type="button"
+            class="mv-tile"
+            :disabled="actionBusy === 'orphan_scan'"
+            @click="triggerAction('orphan_scan', { source_dir: quickForm.source_dir, storage: quickForm.storage })"
           >
-            孤立索引扫描
-          </VBtn>
-          <VBtn
-            size="small"
-            variant="tonal"
-            prepend-icon="mdi-filmstrip"
-            :loading="actionBusy === 'emby_mediainfo'"
-            @click="triggerAction('emby_mediainfo')"
-          >
-            提取 MediaInfo
-          </VBtn>
-          <VBtn
-            size="small"
-            variant="tonal"
-            prepend-icon="mdi-image"
-            :loading="actionBusy === 'emby_thumbnail'"
-            @click="triggerAction('emby_thumbnail')"
-          >
-            生成缩略图
-          </VBtn>
-          <VBtn
-            size="small"
-            variant="tonal"
-            prepend-icon="mdi-tune"
-            :loading="actionBusy === 'emby_intro_skip'"
-            @click="triggerAction('emby_intro_skip')"
-          >
-            片头片尾检测
-          </VBtn>
+            <div class="mv-tile__icon">
+              <VIcon icon="mdi-database" size="18" />
+            </div>
+            <div class="mv-tile__body">
+              <div class="mv-tile__title">{{ actionBusy === 'orphan_scan' ? '扫描中...' : '孤立索引扫描' }}</div>
+              <div class="mv-tile__desc">排查当前云盘目录中的孤立记录</div>
+            </div>
+          </button>
         </div>
       </div>
+
+      <!-- 全局同步与 Emby 增强 -->
+      <VRow dense class="mt-3">
+        <VCol cols="12" md="5">
+          <div class="mv-card mv-card--full">
+            <div class="mv-section-title">监控与 115 维护</div>
+            <div class="mv-subtitle">无需路径参数，作用于整个 MediaVault 实例</div>
+            <div class="mv-action-grid mt-3">
+              <VBtn
+                size="small"
+                variant="tonal"
+                color="primary"
+                prepend-icon="mdi-play"
+                :loading="actionBusy === 'monitor_sync'"
+                @click="triggerAction('monitor_sync')"
+              >
+                监控增量同步
+              </VBtn>
+              <VBtn
+                size="small"
+                variant="tonal"
+                prepend-icon="mdi-broom"
+                :loading="actionBusy === 'clear_115_attempts'"
+                @click="triggerAction('clear_115_attempts')"
+              >
+                清理 115 锁文件 (.json)
+              </VBtn>
+            </div>
+          </div>
+        </VCol>
+        <VCol cols="12" md="7">
+          <div class="mv-card mv-card--full">
+            <div class="mv-section-title">Emby 增强后处理</div>
+            <div class="mv-subtitle">针对缺失项增量提取，或一键重试失败任务</div>
+            <div class="mv-action-grid mt-3">
+              <VBtn
+                size="small"
+                variant="tonal"
+                prepend-icon="mdi-filmstrip"
+                :loading="actionBusy === 'emby_mediainfo'"
+                @click="triggerAction('emby_mediainfo')"
+              >
+                提取 MediaInfo
+              </VBtn>
+              <VBtn
+                size="small"
+                variant="text"
+                prepend-icon="mdi-restart"
+                :loading="actionBusy === 'emby_mediainfo_retry'"
+                @click="triggerAction('emby_mediainfo_retry')"
+              >
+                重试失败
+              </VBtn>
+              <VBtn
+                size="small"
+                variant="tonal"
+                prepend-icon="mdi-image"
+                :loading="actionBusy === 'emby_thumbnail'"
+                @click="triggerAction('emby_thumbnail')"
+              >
+                生成缩略图
+              </VBtn>
+              <VBtn
+                size="small"
+                variant="text"
+                prepend-icon="mdi-restart"
+                :loading="actionBusy === 'emby_thumbnail_retry'"
+                @click="triggerAction('emby_thumbnail_retry')"
+              >
+                重试失败
+              </VBtn>
+              <VBtn
+                size="small"
+                variant="tonal"
+                prepend-icon="mdi-tune"
+                :loading="actionBusy === 'emby_intro_skip'"
+                @click="triggerAction('emby_intro_skip')"
+              >
+                片头片尾检测
+              </VBtn>
+            </div>
+          </div>
+        </VCol>
+      </VRow>
     </template>
 
     <!-- Tab 2: 115 上传失败重试 -->
@@ -777,6 +1003,40 @@ onMounted(() => {
       </div>
     </template>
 
+    <!-- 存为常用路径对弹窗 -->
+    <VDialog v-model="savePairDialog" max-width="440">
+      <VCard class="mv-dialog">
+        <div class="mv-dialog__header">
+          <div class="d-flex align-center ga-2">
+            <VIcon icon="mdi-folder-outline" size="18" color="primary" />
+            <span class="font-weight-semibold">保存为常用路径对</span>
+          </div>
+          <VBtn icon="mdi-close" size="small" variant="text" @click="savePairDialog = false" />
+        </div>
+        <VCardText class="pa-4">
+          <VTextField
+            v-model="newPairName"
+            label="路径对别名（如：全库 / 日番 / 电影）"
+            variant="outlined"
+            density="compact"
+            hide-details="auto"
+          />
+          <div class="text-caption text-medium-emphasis mt-3">
+            云盘源目录：{{ quickForm.source_dir || '-' }}
+          </div>
+          <div class="text-caption text-medium-emphasis mt-1">
+            STRM 目标目录：{{ quickForm.target_dir || '-' }}
+          </div>
+          <div class="d-flex justify-end ga-2 mt-4">
+            <VBtn size="small" variant="text" @click="savePairDialog = false">取消</VBtn>
+            <VBtn size="small" color="primary" variant="flat" :loading="savingPair" @click="saveCurrentPathPair">
+              保存
+            </VBtn>
+          </div>
+        </VCardText>
+      </VCard>
+    </VDialog>
+
     <!-- 联动配置弹窗 -->
     <VDialog v-model="settingsDialog" max-width="920" scrollable>
       <VCard class="mv-dialog">
@@ -917,6 +1177,155 @@ onMounted(() => {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.mv-card--full {
+  height: 100%;
+}
+
+.mv-ops-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.mv-pair-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.mv-pair-chip {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 170px;
+  max-width: 300px;
+  padding: 8px 11px;
+  border-radius: 10px;
+  background: rgba(var(--v-theme-on-surface), 0.03);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.mv-pair-chip:hover {
+  border-color: rgba(var(--v-theme-primary), 0.35);
+}
+
+.mv-pair-chip.is-active {
+  background: rgba(var(--v-theme-primary), 0.08);
+  border-color: rgba(var(--v-theme-primary), 0.45);
+}
+
+.mv-pair-chip__top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.mv-pair-chip__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgb(var(--v-theme-on-surface));
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mv-pair-chip__tag {
+  margin-left: auto;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 600;
+  background: rgba(var(--v-theme-on-surface), 0.08);
+  color: rgba(var(--v-theme-on-surface), 0.65);
+}
+
+.mv-pair-chip__del {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: rgba(var(--v-theme-on-surface), 0.5);
+  cursor: pointer;
+}
+
+.mv-pair-chip__del:hover {
+  background: rgba(var(--v-theme-error), 0.12);
+  color: rgb(var(--v-theme-error));
+}
+
+.mv-pair-chip__path {
+  font-size: 11px;
+  color: rgba(var(--v-theme-on-surface), 0.58);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mv-tile-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.mv-tile {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 11px 12px;
+  border-radius: 10px;
+  background: rgba(var(--v-theme-on-surface), 0.025);
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.mv-tile:hover:not(:disabled) {
+  border-color: rgba(var(--v-theme-primary), 0.35);
+  background: rgba(var(--v-theme-primary), 0.04);
+}
+
+.mv-tile:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.mv-tile__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  background: rgba(var(--v-theme-on-surface), 0.05);
+  flex-shrink: 0;
+}
+
+.mv-tile__body {
+  min-width: 0;
+}
+
+.mv-tile__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgb(var(--v-theme-on-surface));
+}
+
+.mv-tile__desc {
+  margin-top: 2px;
+  font-size: 11.5px;
+  color: rgba(var(--v-theme-on-surface), 0.58);
 }
 
 .mv-table-card {

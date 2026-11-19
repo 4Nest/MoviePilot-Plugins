@@ -128,6 +128,10 @@ class MediaVaultClient:
         """获取目录监控实时运行状态。"""
         return self.request("GET", "/monitor/status") or {}
 
+    def monitor_config(self) -> Dict[str, Any]:
+        """获取目录监控规则配置（用于自动发现常用云盘/STRM 路径对）。"""
+        return self.request("GET", "/monitor/config") or {}
+
     def monitor_events(
         self,
         status: Optional[str] = None,
