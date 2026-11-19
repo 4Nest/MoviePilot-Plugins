@@ -60,7 +60,7 @@ const isConnected = computed(() => Boolean(overview.value?.connected))
 const todayUpload = computed(() => overview.value?.today_upload || {})
 const strmStats = computed(() => overview.value?.strm_stats || {})
 const retryableEvents = computed(() =>
-  failedEvents.value.filter(ev => ev.retry_category === 'retryable'),
+  failedEvents.value.filter(ev => ev.retry_category === 'retryable' || ev.retry_category === 'clear_lock_retry'),
 )
 const manualConfirmEvents = computed(() =>
   failedEvents.value.filter(ev => ev.retry_category === 'manual_confirm'),
@@ -148,12 +148,13 @@ async function refreshAll() {
   await Promise.all([loadOverview(), loadFailedUploads(), loadShareRecords(), loadLogs()])
 }
 
-async function retrySingle(ev: FailedUploadEvent, force = false) {
+async function retrySingle(ev: FailedUploadEvent, force = false, clearAttempts = false) {
   actionBusy.value = `retry_${ev.id}`
   try {
     const res: any = await props.api.post(`plugin/${props.pluginId}/retry-uploads`, {
       event_ids: [ev.id],
       force,
+      clear_attempts: clearAttempts,
     })
     if (res?.success) {
       notify(res.message || '已提交重试', 'success')
@@ -168,16 +169,17 @@ async function retrySingle(ev: FailedUploadEvent, force = false) {
   }
 }
 
-async function retryAllSafe() {
+async function retryAllSafe(clearAttempts = false) {
   if (!retryableEvents.value.length) {
-    notify('当前没有可安全自动重试的失败项', 'info')
+    notify('当前没有可自动重试的失败项', 'info')
     return
   }
-  actionBusy.value = 'retry_safe'
+  actionBusy.value = clearAttempts ? 'retry_clear_all' : 'retry_safe'
   try {
     const res: any = await props.api.post(`plugin/${props.pluginId}/retry-uploads`, {
       event_ids: retryableEvents.value.map(ev => ev.id),
-      force: false,
+      force: clearAttempts,
+      clear_attempts: clearAttempts,
     })
     if (res?.success) {
       notify(res.message || '已批量提交重试', 'success')
@@ -536,17 +538,26 @@ onMounted(() => {
               绿色标签为可安全重试项；橙色标签命中“勿重复上传/请先核对云盘文件”等保护词，自动巡检会跳过，可核对后手动强制重试。
             </div>
           </div>
-          <div class="d-flex ga-2">
+          <div class="d-flex flex-wrap ga-2">
+            <VBtn
+              size="small"
+              variant="tonal"
+              prepend-icon="mdi-broom"
+              :loading="actionBusy === 'clear_115_attempts'"
+              @click="triggerAction('clear_115_attempts')"
+            >
+              清理 115 锁文件 (.json)
+            </VBtn>
             <VBtn
               size="small"
               variant="tonal"
               color="primary"
               prepend-icon="mdi-restart"
-              :loading="actionBusy === 'retry_safe'"
+              :loading="actionBusy === 'retry_clear_all'"
               :disabled="!retryableEvents.length"
-              @click="retryAllSafe"
+              @click="retryAllSafe(true)"
             >
-              批量重试安全项 ({{ retryableEvents.length }})
+              清锁并批量重传 ({{ retryableEvents.length }})
             </VBtn>
           </div>
         </div>
@@ -578,9 +589,9 @@ onMounted(() => {
                 <VChip
                   size="x-small"
                   variant="tonal"
-                  :color="ev.retry_category === 'retryable' ? 'success' : 'warning'"
+                  :color="ev.retry_category === 'retryable' ? 'success' : ev.retry_category === 'clear_lock_retry' ? 'info' : 'warning'"
                 >
-                  {{ ev.retry_category === 'retryable' ? '可安全重试' : '需人工核对' }}
+                  {{ ev.retry_category === 'retryable' ? '可安全重试' : ev.retry_category === 'clear_lock_retry' ? '清锁可重传' : '需人工核对' }}
                 </VChip>
               </td>
               <td class="mv-err-cell">{{ ev.error || ev.message || '-' }}</td>
@@ -591,19 +602,18 @@ onMounted(() => {
                   variant="tonal"
                   color="primary"
                   :loading="actionBusy === `retry_${ev.id}`"
-                  @click="retrySingle(ev, false)"
+                  @click="retrySingle(ev, true, true)"
                 >
-                  重试
+                  清锁重传
                 </VBtn>
                 <VBtn
                   size="x-small"
                   variant="text"
-                  color="warning"
                   class="ml-1"
                   :loading="actionBusy === `retry_${ev.id}`"
-                  @click="retrySingle(ev, true)"
+                  @click="retrySingle(ev, false, false)"
                 >
-                  强制重试
+                  普通重试
                 </VBtn>
               </td>
             </tr>

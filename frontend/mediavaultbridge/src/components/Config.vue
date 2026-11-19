@@ -18,6 +18,8 @@ interface PluginConfigForm {
     max_retries: number
     cooldown_minutes: number
     force_retry: boolean
+    clear_attempts_before_retry: boolean
+    attempts_dir: string
     skip_keywords_regex: string
     notify_on_retry: boolean
     notify_on_manual_required: boolean
@@ -87,7 +89,9 @@ function defaultConfig(): PluginConfigForm {
       max_retries: 3,
       cooldown_minutes: 15,
       force_retry: false,
-      skip_keywords_regex: '勿重复上传|请先核对云盘文件|已接受上传请求|风控|空间不足|capacity|quota|permission denied',
+      clear_attempts_before_retry: true,
+      attempts_dir: '/opt/config/offline115-attempts',
+      skip_keywords_regex: '风控|空间不足|capacity|quota|permission denied',
       notify_on_retry: true,
       notify_on_manual_required: true,
     },
@@ -195,7 +199,15 @@ function submit() {
 </script>
 
 <template>
-  <div class="mv-cfg">
+  <div class="mv-cfg" :class="{ 'mv-cfg--standalone': !embedded }">
+    <div v-if="!embedded" class="mv-cfg__standalone-header">
+      <div class="d-flex align-center ga-2">
+        <VIcon icon="mdi-cog" size="18" color="primary" />
+        <span class="font-weight-semibold">MediaVault 联动管家配置</span>
+      </div>
+      <VBtn icon="mdi-close" size="small" variant="text" @click="emit('close')" />
+    </div>
+    <div class="mv-cfg__inner">
     <div class="mv-cfg__tabs">
       <button
         type="button"
@@ -395,7 +407,8 @@ function submit() {
         </div>
         <div class="mv-cfg__row mt-3">
           <VSwitch v-model="form.upload_retry.enabled" label="启用定时巡检自动重试" color="primary" hide-details density="compact" />
-          <VSwitch v-model="form.upload_retry.force_retry" label="自动重试时附加 force=true" color="warning" hide-details density="compact" />
+          <VSwitch v-model="form.upload_retry.clear_attempts_before_retry" label="命中上传锁提示时自动清理 offline115-attempts/*.json 再重传" color="primary" hide-details density="compact" />
+          <VSwitch v-model="form.upload_retry.force_retry" label="常规重试也附加 force=true" color="warning" hide-details density="compact" />
         </div>
         <VRow dense class="mt-2">
           <VCol cols="12" md="4">
@@ -423,6 +436,16 @@ function submit() {
               v-model.number="form.upload_retry.cooldown_minutes"
               label="同任务重试冷却(分钟)"
               type="number"
+              variant="outlined"
+              density="compact"
+              hide-details="auto"
+            />
+          </VCol>
+          <VCol cols="12" class="mt-2">
+            <VTextField
+              v-model="form.upload_retry.attempts_dir"
+              label="MediaVault 115 尝试锁目录"
+              placeholder="/opt/config/offline115-attempts"
               variant="outlined"
               density="compact"
               hide-details="auto"
@@ -507,6 +530,7 @@ function submit() {
         保存配置
       </VBtn>
     </div>
+    </div>
   </div>
 </template>
 
@@ -514,7 +538,25 @@ function submit() {
 .mv-cfg {
   display: flex;
   flex-direction: column;
+}
+
+.mv-cfg__inner {
+  display: flex;
+  flex-direction: column;
   gap: 14px;
+}
+
+.mv-cfg--standalone .mv-cfg__inner {
+  padding: 16px 20px 18px;
+}
+
+.mv-cfg__standalone-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 50px;
+  padding: 0 18px;
+  border-bottom: 1px solid rgba(var(--v-theme-on-surface), 0.08);
 }
 
 .mv-cfg__tabs {

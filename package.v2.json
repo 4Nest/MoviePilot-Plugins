@@ -37,12 +37,13 @@
     "name": "MediaVault 联动管家",
     "description": "联动 MediaVault (Muvyo)：115 上传失败自动/手动重试、入库触发增量 STRM 与刮削、删片联动清理、Emby 后处理、115 分享链转存与运维面板。",
     "labels": "网盘,STRM,115,联动",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "icon": "cloud.png",
     "author": "4Nest",
     "level": 1,
     "release": true,
     "history": {
+      "v1.1.0": "支持重试前自动清理 MediaVault /opt/config/offline115-attempts/*.json 尝试锁文件并强制重传；新增清锁重传按钮与独立配置弹窗标题栏。",
       "v1.0.0": "初始版本：115 上传失败自动巡检与智能重试（含防重复上传保护）、入库防抖联动 STRM/刮削/Emby 后处理、删片清理扫描、115 分享链直连转存与联邦运维面板。"
     }
   }

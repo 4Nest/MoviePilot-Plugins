@@ -16,7 +16,7 @@
 |------|------|------|
 | [Emby 用户管理](plugins.v2/embyusermanager) | v1.2.4 | 管理 Emby 媒体服务器账号增删改查、登录准入黑白名单及用户订阅数据 |
 | [保种删种管家](plugins.v2/seedcleaner) | v1.1.3 | 多维条件与正则清理规则、模拟干跑预览、磁盘低水位应急保盘，支持 qBittorrent 与 Transmission |
-| [MediaVault 联动管家](plugins.v2/mediavaultbridge) | v1.0.0 | 联动 MediaVault (Muvyo)：115 上传失败智能重试、入库精准 STRM 与刮削、删片联动清理、Emby 后处理与 115 分享链转存 |
+| [MediaVault 联动管家](plugins.v2/mediavaultbridge) | v1.1.0 | 联动 MediaVault (Muvyo)：115 上传失败自动清锁重传、入库精准 STRM 与刮削、删片联动清理、Emby 后处理与 115 分享链转存 |
 
 ## 目录结构
 

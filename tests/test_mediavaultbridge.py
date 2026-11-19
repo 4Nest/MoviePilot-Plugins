@@ -39,7 +39,7 @@ def test_path_mapping_longest_prefix() -> None:
 
 
 def test_classify_and_evaluate_failed_uploads() -> None:
-    """失败上传评估应正确区分可重试、需人工核对、冷却中与超限项。"""
+    """失败上传评估应正确区分常规可重试、需清锁重传、需人工核对、冷却中与超限项。"""
     events = [
         {"id": 101, "file_name": "a.mkv", "error": "connection timed out"},
         {
@@ -49,9 +49,14 @@ def test_classify_and_evaluate_failed_uploads() -> None:
         },
         {"id": 103, "file_name": "c.mkv", "error": "502 bad gateway"},
         {"id": 104, "file_name": "d.mkv", "error": "network reset"},
+        {"id": 105, "file_name": "e.mkv", "error": "115 风控拦截"},
     ]
-    cat, _ = classify_failed_event(events[1])
-    assert cat == "manual_confirm"
+    cat_lock, _ = classify_failed_event(events[1], clear_attempts_before_retry=True)
+    assert cat_lock == "clear_lock_retry"
+    cat_manual, _ = classify_failed_event(events[1], clear_attempts_before_retry=False)
+    assert cat_manual == "manual_confirm"
+    cat_risk, _ = classify_failed_event(events[4], clear_attempts_before_retry=True)
+    assert cat_risk == "manual_confirm"
 
     tracker = {
         "103": {"attempts": 1, "last_ts": 1000.0},
@@ -62,10 +67,12 @@ def test_classify_and_evaluate_failed_uploads() -> None:
         retry_tracker=tracker,
         max_retries=3,
         cooldown_minutes=15,
+        clear_attempts_before_retry=True,
         now_ts=1200.0,
     )
     assert [e["id"] for e in res["to_retry"]] == [101]
-    assert [e["id"] for e in res["manual_confirm"]] == [102]
+    assert [e["id"] for e in res["to_clear_and_retry"]] == [102]
+    assert [e["id"] for e in res["manual_confirm"]] == [105]
     assert [e["id"] for e in res["cooldown"]] == [103]
     assert [e["id"] for e in res["exhausted"]] == [104]
 
@@ -84,8 +91,8 @@ def test_extract_115_share_urls() -> None:
     ]
 
 
-def test_upload_retry_cycle_skips_manual_and_retries_safe() -> None:
-    """自动巡检应仅批量重试可安全项，并对需人工核对项去重告警。"""
+def test_upload_retry_cycle_clears_lock_and_retries() -> None:
+    """自动巡检应先清理 offline115-attempts/*.json 再强制重传锁失败项，并对风控项去重告警。"""
     plugin = MediaVaultBridge()
     plugin.init_plugin(
         {
@@ -98,10 +105,12 @@ def test_upload_retry_cycle_skips_manual_and_retries_safe() -> None:
 
     fake_client = MagicMock()
     fake_client.is_configured.return_value = True
+    fake_client.clear_offline115_attempts.return_value = {"deleted": 2, "found": 2}
     fake_client.monitor_events.return_value = {
         "items": [
             {"id": 201, "file_name": "ok_retry.mkv", "error": "ReadTimeout"},
-            {"id": 202, "file_name": "manual.mkv", "message": "请先核对云盘文件，勿重复上传"},
+            {"id": 202, "file_name": "locked.mkv", "message": "请先核对云盘文件，勿重复上传"},
+            {"id": 203, "file_name": "risk.mkv", "error": "115 风控"},
         ]
     }
     plugin._build_client = MagicMock(return_value=fake_client)
@@ -109,9 +118,12 @@ def test_upload_retry_cycle_skips_manual_and_retries_safe() -> None:
 
     result = plugin.run_upload_retry_cycle(source="test")
     assert result["success"] is True
-    assert result["retried_ids"] == [201]
+    assert set(result["retried_ids"]) == {201, 202}
     assert result["manual_confirm_count"] == 1
-    fake_client.batch_retry_monitor_events.assert_called_once_with(event_ids=[201], force=False)
+    fake_client.clear_offline115_attempts.assert_called_once_with(
+        attempts_dir="/opt/config/offline115-attempts"
+    )
+    assert fake_client.batch_retry_monitor_events.call_count == 2
     assert plugin._send_notice.call_count == 2
 
 

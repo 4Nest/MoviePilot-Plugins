@@ -22,7 +22,7 @@ export interface FailedUploadEvent {
   error?: string
   message?: string
   created_at?: string
-  retry_category: 'retryable' | 'manual_confirm'
+  retry_category: 'retryable' | 'clear_lock_retry' | 'manual_confirm'
   retry_reason?: string
   auto_attempts: number
 }

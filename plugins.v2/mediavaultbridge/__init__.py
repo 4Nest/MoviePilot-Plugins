@@ -55,6 +55,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "max_retries": 3,
         "cooldown_minutes": 15,
         "force_retry": False,
+        "clear_attempts_before_retry": True,
+        "attempts_dir": "/opt/config/offline115-attempts",
         "skip_keywords_regex": DEFAULT_SKIP_RETRY_KEYWORDS,
         "notify_on_retry": True,
         "notify_on_manual_required": True,
@@ -127,7 +129,7 @@ class MediaVaultBridge(_PluginBase):
         "删片联动清理、Emby 后处理、115 分享链转存与运维面板。"
     )
     plugin_icon = "cloud.png"
-    plugin_version = "1.0.0"
+    plugin_version = "1.1.0"
     plugin_author = "4Nest"
     author_url = "https://github.com/4Nest"
     plugin_label = "网盘,STRM,115,联动"
@@ -188,6 +190,11 @@ class MediaVaultBridge(_PluginBase):
         ur["max_retries"] = max(1, min(20, int(ur.get("max_retries") or 3)))
         ur["cooldown_minutes"] = max(1, min(1440, int(ur.get("cooldown_minutes") or 15)))
         ur["force_retry"] = bool(ur.get("force_retry", False))
+        ur["clear_attempts_before_retry"] = bool(ur.get("clear_attempts_before_retry", True))
+        ur["attempts_dir"] = (
+            str(ur.get("attempts_dir") or "/opt/config/offline115-attempts").strip()
+            or "/opt/config/offline115-attempts"
+        )
         ur["skip_keywords_regex"] = str(ur.get("skip_keywords_regex") or "").strip()
         ur["notify_on_retry"] = bool(ur.get("notify_on_retry", True))
         ur["notify_on_manual_required"] = bool(ur.get("notify_on_manual_required", True))
@@ -369,25 +376,40 @@ class MediaVaultBridge(_PluginBase):
                 items = []
 
             tracker = self._get_retry_tracker()
+            clear_attempts = bool(ur.get("clear_attempts_before_retry", True))
+            attempts_dir = str(ur.get("attempts_dir") or "/opt/config/offline115-attempts")
             evaluated = evaluate_retry_candidates(
                 failed_events=items,
                 retry_tracker=tracker,
                 max_retries=int(ur.get("max_retries") or 3),
                 cooldown_minutes=int(ur.get("cooldown_minutes") or 15),
                 skip_regex=str(ur.get("skip_keywords_regex") or ""),
+                clear_attempts_before_retry=clear_attempts,
             )
 
             to_retry = evaluated["to_retry"]
+            to_clear_and_retry = evaluated["to_clear_and_retry"]
             manual_items = evaluated["manual_confirm"]
             retried_ids: List[int] = []
+            attempts_deleted = 0
             now_ts = time.time()
+
+            if to_clear_and_retry:
+                clear_res = client.clear_offline115_attempts(attempts_dir=attempts_dir)
+                attempts_deleted = int(clear_res.get("deleted") or 0)
+                lock_ids = [int(ev["id"]) for ev in to_clear_and_retry]
+                client.batch_retry_monitor_events(event_ids=lock_ids, force=True)
+                retried_ids.extend(lock_ids)
 
             if to_retry:
                 event_ids = [int(ev["id"]) for ev in to_retry]
                 force = bool(ur.get("force_retry", False))
                 client.batch_retry_monitor_events(event_ids=event_ids, force=force)
-                retried_ids = event_ids
-                for eid in event_ids:
+                retried_ids.extend(event_ids)
+
+            all_retried_events = [*to_clear_and_retry, *to_retry]
+            if retried_ids:
+                for eid in retried_ids:
                     key = str(eid)
                     prev = tracker.get(key) or {}
                     tracker[key] = {
@@ -396,10 +418,11 @@ class MediaVaultBridge(_PluginBase):
                     }
                 self._save_retry_tracker(tracker)
                 names = "、".join(
-                    str(ev.get("file_name") or ev.get("id")) for ev in to_retry[:5]
+                    str(ev.get("file_name") or ev.get("id")) for ev in all_retried_events[:5]
                 )
-                suffix = f" 等 {len(to_retry)} 项" if len(to_retry) > 5 else ""
-                summary = f"已自动重试 {len(retried_ids)} 个 115 上传失败任务"
+                suffix = f" 等 {len(all_retried_events)} 项" if len(all_retried_events) > 5 else ""
+                clear_note = f"（已清理 {attempts_deleted} 个 115 尝试锁 JSON）" if to_clear_and_retry else ""
+                summary = f"已自动重试 {len(retried_ids)} 个 115 上传失败任务{clear_note}"
                 self._append_log("upload_retry", "success", summary, f"来源={source}；文件={names}{suffix}")
                 if ur.get("notify_on_retry", True):
                     self._send_notice(
@@ -879,6 +902,7 @@ class MediaVaultBridge(_PluginBase):
         try:
             ur = self._config.get("upload_retry") or {}
             skip_regex = str(ur.get("skip_keywords_regex") or "")
+            clear_attempts = bool(ur.get("clear_attempts_before_retry", True))
             res = client.monitor_events(status="failed", page=page, page_size=page_size)
             raw_items = res.get("items") if isinstance(res, dict) else []
             if not isinstance(raw_items, list):
@@ -887,7 +911,11 @@ class MediaVaultBridge(_PluginBase):
 
             enriched_items: List[Dict[str, Any]] = []
             for ev in raw_items:
-                category, reason = classify_failed_event(ev, skip_regex=skip_regex)
+                category, reason = classify_failed_event(
+                    ev,
+                    skip_regex=skip_regex,
+                    clear_attempts_before_retry=clear_attempts,
+                )
                 rec = tracker.get(str(ev.get("id"))) or {}
                 enriched_items.append(
                     {
@@ -922,6 +950,10 @@ class MediaVaultBridge(_PluginBase):
         try:
             mode = str(payload.get("mode") or "ids")
             force = bool(payload.get("force", False))
+            clear_attempts = bool(payload.get("clear_attempts", False))
+            ur = self._config.get("upload_retry") or {}
+            attempts_dir = str(ur.get("attempts_dir") or "/opt/config/offline115-attempts")
+
             if mode == "auto":
                 result = self.run_upload_retry_cycle(source="manual_auto")
                 return schemas.Response(
@@ -934,21 +966,27 @@ class MediaVaultBridge(_PluginBase):
             if not isinstance(event_ids, list) or not event_ids:
                 return schemas.Response(success=False, message="请选择至少一条失败任务")
 
+            cleared_count = 0
+            if clear_attempts:
+                clear_res = client.clear_offline115_attempts(attempts_dir=attempts_dir)
+                cleared_count = int(clear_res.get("deleted") or 0)
+
             ids_int = [int(x) for x in event_ids]
             if len(ids_int) == 1:
                 resp = client.retry_monitor_event(ids_int[0], force=force)
             else:
                 resp = client.batch_retry_monitor_events(ids_int, force=force)
 
+            clear_note = f"（清理 {cleared_count} 个锁文件）" if clear_attempts else ""
             self._append_log(
                 "upload_retry",
                 "success",
-                f"手动{'强制' if force else ''}重试 {len(ids_int)} 条 115 上传任务",
+                f"手动{'强制' if force else ''}重试 {len(ids_int)} 条 115 上传任务{clear_note}",
                 f"event_ids={ids_int}",
             )
             return schemas.Response(
                 success=True,
-                message=f"已提交 {len(ids_int)} 条任务重试",
+                message=f"已提交 {len(ids_int)} 条任务重试{clear_note}",
                 data=resp,
             )
         except Exception as err:
@@ -1013,6 +1051,13 @@ class MediaVaultBridge(_PluginBase):
             elif action == "emby_thumbnail_retry":
                 res = client.emby_thumbnail_retry()
                 label = "Emby 缩略图失败重试"
+            elif action == "clear_115_attempts":
+                ur = self._config.get("upload_retry") or {}
+                attempts_dir = str(
+                    payload.get("attempts_dir") or ur.get("attempts_dir") or "/opt/config/offline115-attempts"
+                )
+                res = client.clear_offline115_attempts(attempts_dir=attempts_dir)
+                label = f"清理 115 尝试锁（已删除 {res.get('deleted', 0)} 个 JSON）"
             elif action == "emby_intro_skip":
                 res = client.emby_intro_skip_detect(server_slug=emby_slug, only_missing=True)
                 label = "Emby 片头片尾检测"

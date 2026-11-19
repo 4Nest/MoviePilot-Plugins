@@ -184,6 +184,44 @@ class MediaVaultClient:
             or {}
         )
 
+    def browse_local(self, path: str) -> List[Dict[str, Any]]:
+        """浏览 MediaVault 容器内指定本地目录。"""
+        data = self.request("GET", "/files/local/browse", params={"path": path})
+        return data if isinstance(data, list) else []
+
+    def delete_local(self, file_paths: List[str]) -> Dict[str, Any]:
+        """删除 MediaVault 容器内指定本地文件列表。"""
+        if not file_paths:
+            return {"deleted": 0, "failed": 0}
+        res = self.request("POST", "/files/local/delete", payload={"file_ids": file_paths})
+        return res if isinstance(res, dict) else {"deleted": len(file_paths), "failed": 0}
+
+    def clear_offline115_attempts(
+        self,
+        attempts_dir: str = "/opt/config/offline115-attempts",
+    ) -> Dict[str, Any]:
+        """清理 MediaVault offline115-attempts 目录下的 JSON 锁文件（保留子目录）。"""
+        target_dir = str(attempts_dir or "/opt/config/offline115-attempts").strip() or "/opt/config/offline115-attempts"
+        entries = self.browse_local(target_dir)
+        json_paths = [
+            str(item.get("path"))
+            for item in entries
+            if isinstance(item, dict)
+            and not item.get("is_dir")
+            and str(item.get("name") or "").lower().endswith(".json")
+            and item.get("path")
+        ]
+        if not json_paths:
+            return {"dir": target_dir, "found": 0, "deleted": 0, "files": []}
+        res = self.delete_local(json_paths)
+        return {
+            "dir": target_dir,
+            "found": len(json_paths),
+            "deleted": int(res.get("deleted", len(json_paths))),
+            "failed": int(res.get("failed", 0)),
+            "files": [p.rsplit("/", 1)[-1] for p in json_paths],
+        }
+
     # ── STRM 与刮削 ───────────────────────────────────────────────────────────
 
     def strm_stats(self) -> Dict[str, Any]:

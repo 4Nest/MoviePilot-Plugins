@@ -109,7 +109,7 @@ def test_plugin_manifest_and_runtime_hygiene() -> None:
     expected = {
         "EmbyUserManager": (EmbyUserManager, "1.2.4"),
         "SeedCleaner": (SeedCleaner, "1.1.3"),
-        "MediaVaultBridge": (MediaVaultBridge, "1.0.0"),
+        "MediaVaultBridge": (MediaVaultBridge, "1.1.0"),
     }
     for pid, (cls, ver) in expected.items():
         assert cls.__name__ == pid
@@ -132,6 +132,6 @@ def test_plugin_manifest_and_runtime_hygiene() -> None:
     readme_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
     assert "v1.2.4" in readme_text
     assert "v1.1.3" in readme_text
-    assert "v1.0.0" in readme_text
+    assert "v1.1.0" in readme_text
     assert "bilibilinotify" not in readme_text.lower()
     assert "mediacovergenerator" not in readme_text.lower()

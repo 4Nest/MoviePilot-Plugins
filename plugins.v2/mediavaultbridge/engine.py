@@ -8,9 +8,8 @@ from pathlib import PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
 
 
-DEFAULT_SKIP_RETRY_KEYWORDS = (
-    "勿重复上传|请先核对云盘文件|已接受上传请求|风控|空间不足|capacity|quota|permission denied"
-)
+DEFAULT_LOCK_RETRY_KEYWORDS = "勿重复上传|请先核对云盘文件|已接受上传请求"
+DEFAULT_SKIP_RETRY_KEYWORDS = "风控|空间不足|capacity|quota|permission denied"
 
 _SHARE_URL_PATTERN = re.compile(
     r"(https?://(?:115\.com|115cdn\.com|anxia\.com)/s/[A-Za-z0-9]+(?:\?[^\s，。,;；]*)?)",
@@ -103,18 +102,23 @@ def map_mp_path_to_mv(
 def classify_failed_event(
     event: Dict[str, Any],
     skip_regex: str = DEFAULT_SKIP_RETRY_KEYWORDS,
+    clear_attempts_before_retry: bool = True,
 ) -> Tuple[str, str]:
-    """判定失败上传事件是否可安全自动重试，或需人工核对。"""
+    """判定失败上传事件为常规可重试、需清锁后重传或需人工核对。"""
     msg = str(
         event.get("error")
         or event.get("message")
         or event.get("error_message")
         or ""
     ).strip()
+    if re.search(DEFAULT_LOCK_RETRY_KEYWORDS, msg, re.IGNORECASE):
+        if clear_attempts_before_retry:
+            return "clear_lock_retry", "命中 115 上传尝试锁提示，清理 offline115-attempts/*.json 后强制重传"
+        return "manual_confirm", "命中防重复保护提示，建议核对云盘或清理 attempts 锁后再重传"
     if skip_regex:
         try:
             if re.search(skip_regex, msg, re.IGNORECASE):
-                return "manual_confirm", "命中防重复/风控保护关键词，建议核对云盘后再决定是否强制重试"
+                return "manual_confirm", "命中风控/配额保护关键词，建议人工核对后再决定是否强制重试"
         except re.error:
             pass
     return "retryable", "常规上传失败，可安全重试"
@@ -126,15 +130,17 @@ def evaluate_retry_candidates(
     max_retries: int = 3,
     cooldown_minutes: int = 15,
     skip_regex: str = DEFAULT_SKIP_RETRY_KEYWORDS,
+    clear_attempts_before_retry: bool = True,
     now_ts: Optional[float] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
-    """筛选本次可自动重试、冷却中、超限及需人工核对的失败上传事件。"""
+    """筛选本次可自动重试、需清锁重传、冷却中、超限及需人工核对的失败上传事件。"""
     current_ts = now_ts if now_ts is not None else time.time()
     cooldown_sec = max(0, int(cooldown_minutes)) * 60
     limit = max(1, int(max_retries))
 
     result: Dict[str, List[Dict[str, Any]]] = {
         "to_retry": [],
+        "to_clear_and_retry": [],
         "manual_confirm": [],
         "cooldown": [],
         "exhausted": [],
@@ -145,7 +151,11 @@ def evaluate_retry_candidates(
         if event_id is None:
             continue
         key = str(event_id)
-        category, reason = classify_failed_event(event, skip_regex=skip_regex)
+        category, reason = classify_failed_event(
+            event,
+            skip_regex=skip_regex,
+            clear_attempts_before_retry=clear_attempts_before_retry,
+        )
         record = retry_tracker.get(key) or {}
         attempts = int(record.get("attempts") or 0)
         last_ts = float(record.get("last_ts") or 0.0)
@@ -167,7 +177,10 @@ def evaluate_retry_candidates(
         if last_ts > 0 and (current_ts - last_ts) < cooldown_sec:
             result["cooldown"].append(enriched)
             continue
-        result["to_retry"].append(enriched)
+        if category == "clear_lock_retry":
+            result["to_clear_and_retry"].append(enriched)
+        else:
+            result["to_retry"].append(enriched)
 
     return result
 
