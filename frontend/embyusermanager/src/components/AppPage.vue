@@ -15,6 +15,10 @@ interface PluginConfig {
   blacklist: string[]
   allowed_servers: string[]
   allow_emby_admin: boolean
+  subscribe_approval_enabled: boolean
+  approval_bypass_users: string[]
+  approval_notify_telegram: boolean
+  approval_tg_chat_id: string
 }
 
 interface EmbyFolderItem {
@@ -68,10 +72,30 @@ interface UserOverviewItem {
   movie_sub_count: number
   tv_sub_count: number
   total_sub_count: number
+  pending_sub_count?: number
   in_whitelist: boolean
   in_blacklist: boolean
+  in_approval_bypass?: boolean
   access_status: 'allowed' | 'blocked' | 'disabled'
   access_reason: string
+}
+
+interface ApprovalRequestItem {
+  id: string
+  status: 'pending' | 'approved' | 'manual' | 'rejected'
+  username: string
+  title: string
+  year?: string
+  type: string
+  season?: number | null
+  vote?: number | null
+  overview?: string
+  poster?: string
+  backdrop?: string
+  created_at?: string
+  handled_at?: string | null
+  handled_by?: string | null
+  subscribe_id?: number | null
 }
 
 interface UserSubscribeItem {
@@ -109,8 +133,13 @@ const toast = inject<HostToast | null>('moviepilot:toast', null)
 
 const loading = ref(false)
 const savingConfig = ref(false)
+const activeTab = ref<'users' | 'approvals'>('users')
 const keyword = ref('')
 const statusFilter = ref<'all' | 'allowed' | 'blocked' | 'disabled' | 'registered'>('all')
+const approvalFilter = ref<'pending' | 'approved' | 'manual' | 'rejected' | 'all'>('pending')
+const actingApprovalIds = ref<Record<string, boolean>>({})
+const batchApproving = ref(false)
+const clearingHistory = ref(false)
 
 const config = ref<PluginConfig>({
   enabled: true,
@@ -119,6 +148,10 @@ const config = ref<PluginConfig>({
   blacklist: [],
   allowed_servers: [],
   allow_emby_admin: true,
+  subscribe_approval_enabled: false,
+  approval_bypass_users: [],
+  approval_notify_telegram: true,
+  approval_tg_chat_id: '',
 })
 const servers = ref<EmbyServerSummary[]>([])
 const stats = ref({
@@ -126,13 +159,16 @@ const stats = ref({
   mp_registered_count: 0,
   allowed_user_count: 0,
   total_subscribe_count: 0,
+  pending_approval_count: 0,
 })
 const users = ref<UserOverviewItem[]>([])
+const approvals = ref<ApprovalRequestItem[]>([])
 
 // 准入策略弹窗状态
 const settingsDialog = ref(false)
 const whitelistInput = ref('')
 const blacklistInput = ref('')
+const approvalBypassInput = ref('')
 
 // 新建 Emby 账号弹窗状态
 const createDialog = ref(false)
@@ -154,6 +190,7 @@ const createForm = reactive({
   enable_audio_transcoding: true,
   simultaneous_stream_limit: 0,
   add_to_whitelist: false,
+  add_to_approval_bypass: false,
 })
 
 // 编辑 Emby 账号弹窗状态
@@ -217,6 +254,29 @@ const filterPills = computed(() => [
   { value: 'registered' as const, label: '已登录 MP', count: stats.value.mp_registered_count },
 ])
 
+const pendingApprovalCount = computed(() => approvals.value.filter(item => item.status === 'pending').length)
+const handledApprovalCount = computed(() => approvals.value.filter(item => item.status !== 'pending').length)
+
+const approvalPills = computed(() => [
+  { value: 'pending' as const, label: '待审批', count: pendingApprovalCount.value },
+  {
+    value: 'approved' as const,
+    label: '已通过',
+    count: approvals.value.filter(i => i.status === 'approved').length,
+  },
+  {
+    value: 'manual' as const,
+    label: '手动入库',
+    count: approvals.value.filter(i => i.status === 'manual').length,
+  },
+  {
+    value: 'rejected' as const,
+    label: '已拒绝',
+    count: approvals.value.filter(i => i.status === 'rejected').length,
+  },
+  { value: 'all' as const, label: '全部', count: approvals.value.length },
+])
+
 function notifySuccess(msg: string) {
   toast?.success(msg)
 }
@@ -246,12 +306,21 @@ async function fetchOverview() {
         blacklist: res.data.config?.blacklist || [],
         allowed_servers: res.data.config?.allowed_servers || [],
         allow_emby_admin: Boolean(res.data.config?.allow_emby_admin ?? true),
+        subscribe_approval_enabled: Boolean(res.data.config?.subscribe_approval_enabled ?? false),
+        approval_bypass_users: res.data.config?.approval_bypass_users || [],
+        approval_notify_telegram: Boolean(res.data.config?.approval_notify_telegram ?? true),
+        approval_tg_chat_id: String(res.data.config?.approval_tg_chat_id ?? ''),
       }
       whitelistInput.value = config.value.whitelist.join(', ')
       blacklistInput.value = config.value.blacklist.join(', ')
+      approvalBypassInput.value = config.value.approval_bypass_users.join(', ')
       servers.value = res.data.servers || []
-      stats.value = res.data.stats || stats.value
+      stats.value = {
+        ...stats.value,
+        ...(res.data.stats || {}),
+      }
       users.value = res.data.users || []
+      approvals.value = Array.isArray(res.data.approvals) ? res.data.approvals : []
     }
   } catch (err) {
     console.error('加载 Emby 用户概览失败:', err)
@@ -276,6 +345,31 @@ const filteredUsers = computed(() => {
     return true
   })
 })
+
+const filteredApprovals = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  return approvals.value.filter(item => {
+    if (approvalFilter.value !== 'all' && item.status !== approvalFilter.value) return false
+    if (kw) {
+      const hay = `${item.title || ''} ${item.username || ''} ${item.year || ''}`.toLowerCase()
+      if (!hay.includes(kw)) return false
+    }
+    return true
+  })
+})
+
+function approvalStatusLabel(status: ApprovalRequestItem['status']) {
+  if (status === 'approved') return '已通过并提交 MP'
+  if (status === 'manual') return '已标记手动入库'
+  if (status === 'rejected') return '已拒绝'
+  return '待审批'
+}
+
+function jumpToUserApprovals(username: string) {
+  activeTab.value = 'approvals'
+  approvalFilter.value = 'pending'
+  keyword.value = username
+}
 
 function statusLabel(status: UserOverviewItem['access_status']) {
   if (status === 'allowed') return '允许登录'
@@ -345,6 +439,7 @@ function openCreateDialog() {
   createForm.enable_audio_transcoding = true
   createForm.simultaneous_stream_limit = 0
   createForm.add_to_whitelist = config.value.allow_mode === 'whitelist'
+  createForm.add_to_approval_bypass = false
   showCreatePassword.value = false
   createdCredential.value = null
   createDialog.value = true
@@ -365,6 +460,7 @@ async function submitCreateUser() {
       password: createForm.password,
       copy_from_user_id: createForm.copy_from_user_id || '',
       add_to_whitelist: createForm.add_to_whitelist,
+      add_to_approval_bypass: createForm.add_to_approval_bypass,
     }
     if (!createForm.copy_from_user_id) {
       Object.assign(payload, {
@@ -540,7 +636,7 @@ async function toggleUserActive(user: UserOverviewItem) {
 
 async function updateAccessList(
   user: UserOverviewItem,
-  listType: 'whitelist' | 'blacklist',
+  listType: 'whitelist' | 'blacklist' | 'approval_bypass',
   action: 'add' | 'remove',
 ) {
   if (!props.api?.post) return
@@ -562,9 +658,82 @@ async function updateAccessList(
   }
 }
 
+async function handleApprovalAction(
+  item: ApprovalRequestItem,
+  action: 'approve' | 'manual' | 'reject' | 'delete',
+) {
+  if (!props.api?.post || actingApprovalIds.value[item.id]) return
+  actingApprovalIds.value[item.id] = true
+  try {
+    const res = await props.api.post(`plugin/${resolvedPluginId.value}/approval/action`, {
+      request_id: item.id,
+      action,
+    })
+    if (res?.success) {
+      notifySuccess(res.message || '操作已完成')
+      if (Array.isArray(res.data?.approvals)) {
+        approvals.value = res.data.approvals
+      }
+      await fetchOverview()
+    } else {
+      notifyError(res?.message || '处理审批失败')
+    }
+  } catch (err) {
+    console.error(err)
+    notifyError('处理审批请求失败')
+  } finally {
+    delete actingApprovalIds.value[item.id]
+  }
+}
+
+async function approveAllFiltered() {
+  const pendingIds = filteredApprovals.value.filter(i => i.status === 'pending').map(i => i.id)
+  if (!pendingIds.length || !props.api?.post) return
+  batchApproving.value = true
+  try {
+    const res = await props.api.post(`plugin/${resolvedPluginId.value}/approval/action`, {
+      request_ids: pendingIds,
+      action: 'approve',
+    })
+    if (res?.success) {
+      notifySuccess(res.message || '批量通过已完成')
+      await fetchOverview()
+    } else {
+      notifyError(res?.message || '批量通过失败')
+    }
+  } catch (err) {
+    console.error(err)
+    notifyError('批量通过请求失败')
+  } finally {
+    batchApproving.value = false
+  }
+}
+
+async function clearApprovalHistory() {
+  if (!props.api?.post) return
+  clearingHistory.value = true
+  try {
+    const res = await props.api.post(`plugin/${resolvedPluginId.value}/approval/clear`, {})
+    if (res?.success) {
+      notifySuccess(res.message || '已清理历史审批记录')
+      if (Array.isArray(res.data?.approvals)) {
+        approvals.value = res.data.approvals
+      }
+    } else {
+      notifyError(res?.message || '清理历史记录失败')
+    }
+  } catch (err) {
+    console.error(err)
+    notifyError('清理历史记录请求失败')
+  } finally {
+    clearingHistory.value = false
+  }
+}
+
 function openSettingsDialog() {
   whitelistInput.value = config.value.whitelist.join(', ')
   blacklistInput.value = config.value.blacklist.join(', ')
+  approvalBypassInput.value = config.value.approval_bypass_users.join(', ')
   settingsDialog.value = true
 }
 
@@ -574,12 +743,14 @@ async function savePolicyConfig() {
   try {
     const payload: PluginConfig = {
       ...config.value,
+      approval_tg_chat_id: (config.value.approval_tg_chat_id || '').trim(),
       whitelist: parseListText(whitelistInput.value),
       blacklist: parseListText(blacklistInput.value),
+      approval_bypass_users: parseListText(approvalBypassInput.value),
     }
     const res = await props.api.post(`plugin/${resolvedPluginId.value}/config`, payload)
     if (res?.success) {
-      notifySuccess('登录准入策略已保存')
+      notifySuccess('准入与订阅审批策略已保存')
       settingsDialog.value = false
       await fetchOverview()
       emit('action')
@@ -682,6 +853,30 @@ onMounted(() => {
               <v-icon :icon="config.enabled ? 'mdi-shield-check-outline' : 'mdi-shield-off-outline'" size="13" />
               {{ config.enabled ? `准入：${allowModeLabel(config.allow_mode)}` : '准入已关闭' }}
             </button>
+            <button
+              type="button"
+              class="emby-tag emby-tag--clickable"
+              :class="
+                pendingApprovalCount > 0
+                  ? 'is-warning'
+                  : config.subscribe_approval_enabled
+                    ? 'is-active'
+                    : 'is-muted'
+              "
+              @click="config.subscribe_approval_enabled || approvals.length ? (activeTab = 'approvals') : openSettingsDialog()"
+            >
+              <v-icon
+                :icon="config.subscribe_approval_enabled ? 'mdi-bell-check' : 'mdi-bell-sleep-outline'"
+                size="13"
+              />
+              {{
+                config.subscribe_approval_enabled
+                  ? pendingApprovalCount > 0
+                    ? `订阅审批 · 待审 ${pendingApprovalCount}`
+                    : '订阅审批已开启'
+                  : '订阅审批已关闭'
+              }}
+            </button>
           </div>
         </div>
       </div>
@@ -692,7 +887,7 @@ onMounted(() => {
           variant="text"
           size="small"
           rounded="lg"
-          aria-label="刷新用户列表"
+          aria-label="刷新列表"
           :loading="loading"
           @click="fetchOverview"
         />
@@ -703,7 +898,7 @@ onMounted(() => {
           prepend-icon="mdi-shield-lock-outline"
           @click="openSettingsDialog"
         >
-          准入策略
+          准入与审批策略
         </v-btn>
         <v-btn
           size="small"
@@ -719,45 +914,266 @@ onMounted(() => {
       </div>
     </header>
 
-    <!-- 2. 一体化统计筛选与搜索工具条 -->
+    <!-- 2. 一体化视图切换、统计筛选与搜索工具条 -->
     <section class="emby-toolbar">
       <div class="emby-toolbar__left">
-        <div class="emby-pills" role="group" aria-label="用户状态筛选">
+        <div class="emby-pills emby-pills--mode" role="tablist" aria-label="功能视图切换">
           <button
-            v-for="item in filterPills"
-            :key="item.value"
             type="button"
             class="emby-pill"
-            :class="{ 'is-active': statusFilter === item.value }"
-            @click="statusFilter = item.value"
+            :class="{ 'is-active': activeTab === 'users' }"
+            @click="activeTab = 'users'"
           >
-            <span>{{ item.label }}</span>
-            <strong>{{ item.count }}</strong>
+            <v-icon icon="mdi-account-multiple-outline" size="14" />
+            <span>用户列表</span>
+            <strong>{{ users.length }}</strong>
+          </button>
+          <button
+            type="button"
+            class="emby-pill"
+            :class="{ 'is-active': activeTab === 'approvals' }"
+            @click="activeTab = 'approvals'"
+          >
+            <v-icon icon="mdi-clipboard-list-outline" size="14" />
+            <span>订阅审批</span>
+            <strong :class="{ 'is-alert': pendingApprovalCount > 0 }">
+              {{ pendingApprovalCount > 0 ? pendingApprovalCount : approvals.length }}
+            </strong>
           </button>
         </div>
 
-        <span class="emby-sub-counter" title="全员电影与剧集订阅总数">
-          <v-icon icon="mdi-playlist-star" size="14" />
-          订阅 {{ stats.total_subscribe_count }}
-        </span>
+        <template v-if="activeTab === 'users'">
+          <div class="emby-pills" role="group" aria-label="用户状态筛选">
+            <button
+              v-for="item in filterPills"
+              :key="item.value"
+              type="button"
+              class="emby-pill"
+              :class="{ 'is-active': statusFilter === item.value }"
+              @click="statusFilter = item.value"
+            >
+              <span>{{ item.label }}</span>
+              <strong>{{ item.count }}</strong>
+            </button>
+          </div>
+
+          <span class="emby-sub-counter" title="全员电影与剧集订阅总数">
+            <v-icon icon="mdi-playlist-star" size="14" />
+            订阅 {{ stats.total_subscribe_count }}
+          </span>
+        </template>
+
+        <template v-else>
+          <div class="emby-pills" role="group" aria-label="审批状态筛选">
+            <button
+              v-for="item in approvalPills"
+              :key="item.value"
+              type="button"
+              class="emby-pill"
+              :class="{ 'is-active': approvalFilter === item.value }"
+              @click="approvalFilter = item.value"
+            >
+              <span>{{ item.label }}</span>
+              <strong>{{ item.count }}</strong>
+            </button>
+          </div>
+        </template>
       </div>
 
-      <v-text-field
-        v-model="keyword"
-        class="emby-search"
-        prepend-inner-icon="mdi-magnify"
-        placeholder="搜索用户名..."
-        density="compact"
-        variant="outlined"
-        hide-details
-        clearable
-      />
+      <div class="emby-toolbar__right">
+        <v-btn
+          v-if="activeTab === 'approvals' && filteredApprovals.some(i => i.status === 'pending')"
+          size="small"
+          color="success"
+          variant="tonal"
+          rounded="lg"
+          prepend-icon="mdi-check-all"
+          :loading="batchApproving"
+          @click="approveAllFiltered"
+        >
+          全部通过
+        </v-btn>
+        <v-btn
+          v-if="activeTab === 'approvals' && handledApprovalCount > 0"
+          size="small"
+          variant="outlined"
+          rounded="lg"
+          prepend-icon="mdi-broom"
+          :loading="clearingHistory"
+          @click="clearApprovalHistory"
+        >
+          清理历史
+        </v-btn>
+        <v-text-field
+          v-model="keyword"
+          class="emby-search"
+          prepend-inner-icon="mdi-magnify"
+          :placeholder="activeTab === 'users' ? '搜索用户名...' : '搜索片名或申请人...'"
+          density="compact"
+          variant="outlined"
+          hide-details
+          clearable
+        />
+      </div>
     </section>
 
     <v-progress-linear v-if="loading" indeterminate color="primary" class="mb-3" rounded />
 
-    <!-- 空状态 -->
-    <div v-if="!loading && filteredUsers.length === 0" class="emby-empty">
+    <!-- 视图 A：订阅审批列表 -->
+    <template v-if="activeTab === 'approvals'">
+      <v-alert
+        v-if="!config.subscribe_approval_enabled"
+        type="info"
+        variant="tonal"
+        density="compact"
+        rounded="lg"
+        class="mb-3"
+      >
+        <div class="d-flex flex-wrap align-center justify-space-between ga-2">
+          <span class="text-body-2">
+            当前尚未开启「普通用户订阅审批」，非管理员发起的订阅将直接提交至 MoviePilot。
+          </span>
+          <v-btn size="x-small" color="primary" variant="flat" rounded="lg" @click="openSettingsDialog">
+            前往开启
+          </v-btn>
+        </div>
+      </v-alert>
+
+      <div v-if="!loading && filteredApprovals.length === 0" class="emby-empty">
+        <v-icon icon="mdi-clipboard-search-outline" size="38" class="mb-2 text-medium-emphasis" />
+        <div class="text-subtitle-1 font-weight-bold">
+          {{ approvalFilter === 'pending' && !keyword ? '暂无待审批订阅申请' : '未找到匹配的审批记录' }}
+        </div>
+        <div class="text-body-2 text-medium-emphasis mt-1 mb-3">
+          {{
+            approvalFilter === 'pending' && !keyword
+              ? '当普通 Emby 用户发起新订阅时，将在此处展示并同步推送 Telegram 审批卡片'
+              : '可切换状态筛选或清空搜索关键词查看其他记录'
+          }}
+        </div>
+        <v-btn
+          v-if="keyword || approvalFilter !== 'all'"
+          size="small"
+          variant="tonal"
+          rounded="lg"
+          @click="
+            keyword = '';
+            approvalFilter = 'all'
+          "
+        >
+          查看全部记录
+        </v-btn>
+      </div>
+
+      <div v-else class="emby-approval-list">
+        <article
+          v-for="req in filteredApprovals"
+          :key="req.id"
+          class="emby-approval-card"
+          :class="`is-${req.status}`"
+        >
+          <div class="emby-approval-card__poster">
+            <img v-if="req.poster" :src="req.poster" :alt="req.title" loading="lazy" />
+            <div v-else class="emby-approval-card__poster-fallback">
+              <v-icon :icon="req.type === '电影' ? 'mdi-movie-open-outline' : 'mdi-television'" size="24" />
+            </div>
+          </div>
+
+          <div class="emby-approval-card__main">
+            <div class="emby-approval-card__title-row">
+              <span class="emby-approval-card__title">{{ req.title }}</span>
+              <span v-if="req.year" class="emby-approval-card__year">({{ req.year }})</span>
+              <span class="emby-chip" :class="req.type === '电影' ? 'is-success' : 'is-info'">
+                {{ req.type === '电影' ? '电影' : '剧集' }}
+              </span>
+              <span v-if="req.type !== '电影' && req.season" class="emby-chip is-neutral">
+                第 {{ req.season }} 季
+              </span>
+              <span v-if="req.vote && req.vote > 0" class="emby-approval-card__vote">
+                <v-icon icon="mdi-star" size="13" color="warning" />
+                {{ Number(req.vote).toFixed(1) }}
+              </span>
+            </div>
+
+            <div class="emby-approval-card__meta">
+              <span>
+                <v-icon icon="mdi-account-outline" size="13" />
+                申请人：<b>{{ req.username }}</b>
+              </span>
+              <span class="emby-dot">·</span>
+              <span>{{ req.created_at || '-' }}</span>
+              <template v-if="req.status !== 'pending' && req.handled_by">
+                <span class="emby-dot">·</span>
+                <span>由 {{ req.handled_by }} 处理于 {{ req.handled_at || '-' }}</span>
+              </template>
+            </div>
+
+            <div v-if="req.overview" class="emby-approval-card__overview" :title="req.overview">
+              {{ req.overview }}
+            </div>
+          </div>
+
+          <div class="emby-approval-card__actions">
+            <template v-if="req.status === 'pending'">
+              <v-btn
+                size="small"
+                color="success"
+                variant="flat"
+                rounded="lg"
+                prepend-icon="mdi-check-circle-outline"
+                :loading="Boolean(actingApprovalIds[req.id])"
+                @click="handleApprovalAction(req, 'approve')"
+              >
+                通过并提交 MP
+              </v-btn>
+              <v-btn
+                size="small"
+                color="info"
+                variant="tonal"
+                rounded="lg"
+                prepend-icon="mdi-tray-arrow-down"
+                :loading="Boolean(actingApprovalIds[req.id])"
+                @click="handleApprovalAction(req, 'manual')"
+              >
+                标记手动入库
+              </v-btn>
+              <v-btn
+                size="small"
+                color="error"
+                variant="tonal"
+                rounded="lg"
+                prepend-icon="mdi-close-circle-outline"
+                :loading="Boolean(actingApprovalIds[req.id])"
+                @click="handleApprovalAction(req, 'reject')"
+              >
+                拒绝申请
+              </v-btn>
+            </template>
+            <template v-else>
+              <span class="emby-approval-badge" :class="`is-${req.status}`">
+                {{ approvalStatusLabel(req.status) }}
+                <template v-if="req.status === 'approved' && req.subscribe_id">#{{ req.subscribe_id }}</template>
+              </span>
+              <v-btn
+                icon="mdi-delete-outline"
+                size="x-small"
+                variant="text"
+                rounded="lg"
+                color="medium-emphasis"
+                aria-label="删除记录"
+                :loading="Boolean(actingApprovalIds[req.id])"
+                @click="handleApprovalAction(req, 'delete')"
+              />
+            </template>
+          </div>
+        </article>
+      </div>
+    </template>
+
+    <!-- 视图 B：用户列表 -->
+    <template v-else>
+      <!-- 空状态 -->
+      <div v-if="!loading && filteredUsers.length === 0" class="emby-empty">
       <v-icon icon="mdi-account-search-outline" size="38" class="mb-2 text-medium-emphasis" />
       <div class="text-subtitle-1 font-weight-bold">
         {{ keyword || statusFilter !== 'all' ? '未找到匹配的用户' : '暂无 Emby 用户' }}
@@ -817,7 +1233,16 @@ onMounted(() => {
               />
               <span v-if="user.in_whitelist" class="emby-chip is-success">白名单</span>
               <span v-if="user.in_blacklist" class="emby-chip is-error">黑名单</span>
+              <span v-if="user.in_approval_bypass" class="emby-chip is-primary">免审</span>
               <span v-if="user.registered_in_mp" class="emby-chip is-info">MP</span>
+              <button
+                v-if="user.pending_sub_count && user.pending_sub_count > 0"
+                type="button"
+                class="emby-chip is-warning emby-chip--clickable"
+                @click="jumpToUserApprovals(user.username)"
+              >
+                待审 {{ user.pending_sub_count }}
+              </button>
             </div>
             <div class="emby-card__meta" :title="userMetaSummary(user)">
               {{ userMetaSummary(user) }}
@@ -897,6 +1322,12 @@ onMounted(() => {
               >
                 <v-list-item-title>{{ user.in_blacklist ? '移出黑名单' : '加入黑名单' }}</v-list-item-title>
               </v-list-item>
+              <v-list-item
+                prepend-icon="mdi-check-decagram-outline"
+                @click="updateAccessList(user, 'approval_bypass', user.in_approval_bypass ? 'remove' : 'add')"
+              >
+                <v-list-item-title>{{ user.in_approval_bypass ? '取消订阅免审' : '设为订阅免审' }}</v-list-item-title>
+              </v-list-item>
               <v-list-item prepend-icon="mdi-format-list-bulleted" @click="openUserSubscribes(user)">
                 <v-list-item-title>查看订阅明细 ({{ user.total_sub_count }})</v-list-item-title>
               </v-list-item>
@@ -909,6 +1340,7 @@ onMounted(() => {
         </div>
       </article>
     </div>
+    </template>
 
     <!-- 新建 Emby 账号弹窗 -->
     <v-dialog v-model="createDialog" max-width="600" scrollable>
@@ -1055,6 +1487,13 @@ onMounted(() => {
             color="primary"
             density="compact"
             label="同时加入 MoviePilot 登录白名单"
+            hide-details
+          />
+          <v-checkbox
+            v-model="createForm.add_to_approval_bypass"
+            color="primary"
+            density="compact"
+            label="同时加入订阅免审直通名单"
             hide-details
           />
         </v-card-text>
@@ -1249,17 +1688,18 @@ onMounted(() => {
       </v-card>
     </v-dialog>
 
-    <!-- 准入策略设置弹窗 -->
-    <v-dialog v-model="settingsDialog" max-width="540" scrollable>
+    <!-- 准入与订阅审批策略设置弹窗 -->
+    <v-dialog v-model="settingsDialog" max-width="580" scrollable>
       <v-card class="emby-dialog">
         <v-card-title class="emby-dialog__header">
           <span class="d-flex align-center ga-2">
             <v-icon icon="mdi-shield-lock-outline" size="20" color="primary" />
-            <span>MoviePilot 登录准入策略</span>
+            <span>登录准入与订阅审批策略</span>
           </span>
           <v-btn icon="mdi-close" variant="text" size="small" rounded="lg" @click="settingsDialog = false" />
         </v-card-title>
         <v-card-text class="emby-dialog__body">
+          <div class="emby-dialog__subhead">1. 登录准入控制</div>
           <v-alert type="info" variant="tonal" density="compact" rounded="lg" class="text-caption">
             仅控制谁能使用 Emby 账号登录 MoviePilot 发起订阅，不影响 Emby 自身观影权限。
           </v-alert>
@@ -1307,6 +1747,38 @@ onMounted(() => {
           <v-textarea
             v-model="blacklistInput"
             label="黑名单用户名（逗号或换行分隔）"
+            variant="outlined"
+            rows="2"
+            density="compact"
+            hide-details
+          />
+
+          <v-divider class="my-1" />
+          <div class="emby-dialog__subhead">2. 普通用户订阅审批</div>
+          <v-switch
+            v-model="config.subscribe_approval_enabled"
+            color="primary"
+            density="compact"
+            label="开启普通用户订阅审批（通过后才提交到 MoviePilot）"
+            hide-details
+          />
+          <v-switch
+            v-model="config.approval_notify_telegram"
+            color="primary"
+            density="compact"
+            label="推送 Telegram 审批卡片（含通过并提交 MP / 标记手动入库 / 拒绝按钮）"
+            hide-details
+          />
+          <v-text-field
+            v-model="config.approval_tg_chat_id"
+            label="审批通知 Telegram Chat ID（可选，留空走系统默认通知会话）"
+            variant="outlined"
+            density="compact"
+            hide-details
+          />
+          <v-textarea
+            v-model="approvalBypassInput"
+            label="免审批直通用户名单（逗号或换行分隔，名单内用户订阅直接提交 MP）"
             variant="outlined"
             rows="2"
             density="compact"
@@ -1809,6 +2281,188 @@ onMounted(() => {
   box-shadow: none !important;
 }
 
+.emby-tag.is-warning {
+  border-color: rgba(var(--v-theme-warning), 0.3);
+  background: rgba(var(--v-theme-warning), 0.12);
+  color: rgb(var(--v-theme-warning));
+}
+
+.emby-toolbar__right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.emby-pill strong.is-alert {
+  background: rgba(var(--v-theme-warning), 0.16);
+  color: rgb(var(--v-theme-warning));
+}
+
+.emby-chip.is-primary {
+  background: rgba(var(--v-theme-primary), 0.12);
+  color: rgb(var(--v-theme-primary));
+}
+
+.emby-chip.is-warning {
+  background: rgba(var(--v-theme-warning), 0.14);
+  color: rgb(var(--v-theme-warning));
+}
+
+.emby-chip.is-neutral {
+  background: rgba(var(--v-theme-on-surface), 0.07);
+  color: rgba(var(--v-theme-on-surface), 0.75);
+}
+
+.emby-chip--clickable {
+  border: none;
+  cursor: pointer;
+}
+
+/* 4. 订阅审批卡片列表（哑光分层，零毛玻璃） */
+.emby-approval-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.emby-approval-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 15px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  border-radius: 12px;
+  background: rgb(var(--v-theme-surface));
+  transition: border-color 0.16s ease;
+}
+
+.emby-approval-card:hover {
+  border-color: rgba(var(--v-theme-on-surface), 0.16);
+}
+
+.emby-approval-card.is-pending {
+  border-color: rgba(var(--v-theme-primary), 0.22);
+}
+
+.emby-approval-card__poster {
+  width: 56px;
+  height: 82px;
+  flex-shrink: 0;
+  border-radius: 7px;
+  overflow: hidden;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  background: rgba(var(--v-theme-on-surface), 0.04);
+}
+
+.emby-approval-card__poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.emby-approval-card__poster-fallback {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: rgba(var(--v-theme-on-surface), 0.36);
+}
+
+.emby-approval-card__main {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.emby-approval-card__title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.emby-approval-card__title {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
+.emby-approval-card__year {
+  color: rgba(var(--v-theme-on-surface), 0.56);
+  font-size: 13px;
+}
+
+.emby-approval-card__vote {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgb(var(--v-theme-warning));
+  font-variant-numeric: tabular-nums;
+}
+
+.emby-approval-card__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+  color: rgba(var(--v-theme-on-surface), 0.62);
+  font-size: 12px;
+}
+
+.emby-approval-card__meta b {
+  color: rgba(var(--v-theme-on-surface), 0.88);
+}
+
+.emby-approval-card__overview {
+  color: rgba(var(--v-theme-on-surface), 0.68);
+  font-size: 12.5px;
+  line-height: 1.45;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.emby-approval-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.emby-approval-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.emby-approval-badge.is-approved {
+  background: rgba(var(--v-theme-success), 0.12);
+  color: rgb(var(--v-theme-success));
+}
+
+.emby-approval-badge.is-manual {
+  background: rgba(var(--v-theme-info), 0.12);
+  color: rgb(var(--v-theme-info));
+}
+
+.emby-approval-badge.is-rejected {
+  background: rgba(var(--v-theme-error), 0.12);
+  color: rgb(var(--v-theme-error));
+}
+
 /* 弹窗统一样式（Antigravity IDE 14px + 50px 紧凑顶栏） */
 .emby-dialog {
   border-radius: 14px !important;
@@ -1860,6 +2514,18 @@ onMounted(() => {
   padding: 10px 18px 12px;
   background: rgb(var(--v-theme-surface));
   border-top: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+}
+
+@media (max-width: 720px) {
+  .emby-approval-card {
+    flex-wrap: wrap;
+  }
+
+  .emby-approval-card__actions {
+    width: 100%;
+    justify-content: flex-start;
+    padding-top: 4px;
+  }
 }
 
 @media (max-width: 600px) {

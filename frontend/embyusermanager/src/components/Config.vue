@@ -22,6 +22,12 @@ const blacklistText = ref(Array.isArray(props.initialConfig?.blacklist) ? props.
 const allowedServersText = ref(
   Array.isArray(props.initialConfig?.allowed_servers) ? props.initialConfig.allowed_servers.join(', ') : '',
 )
+const subscribeApprovalEnabled = ref(Boolean(props.initialConfig?.subscribe_approval_enabled ?? false))
+const approvalNotifyTelegram = ref(Boolean(props.initialConfig?.approval_notify_telegram ?? true))
+const approvalTgChatId = ref(String(props.initialConfig?.approval_tg_chat_id ?? ''))
+const approvalBypassText = ref(
+  Array.isArray(props.initialConfig?.approval_bypass_users) ? props.initialConfig.approval_bypass_users.join(', ') : '',
+)
 
 watch(
   () => props.initialConfig,
@@ -32,6 +38,12 @@ watch(
     whitelistText.value = Array.isArray(next?.whitelist) ? next.whitelist.join(', ') : ''
     blacklistText.value = Array.isArray(next?.blacklist) ? next.blacklist.join(', ') : ''
     allowedServersText.value = Array.isArray(next?.allowed_servers) ? next.allowed_servers.join(', ') : ''
+    subscribeApprovalEnabled.value = Boolean(next?.subscribe_approval_enabled ?? false)
+    approvalNotifyTelegram.value = Boolean(next?.approval_notify_telegram ?? true)
+    approvalTgChatId.value = String(next?.approval_tg_chat_id ?? '')
+    approvalBypassText.value = Array.isArray(next?.approval_bypass_users)
+      ? next.approval_bypass_users.join(', ')
+      : ''
   },
   { deep: true },
 )
@@ -52,6 +64,10 @@ function handleSave() {
     whitelist: parseList(whitelistText.value),
     blacklist: parseList(blacklistText.value),
     allowed_servers: parseList(allowedServersText.value),
+    subscribe_approval_enabled: subscribeApprovalEnabled.value,
+    approval_notify_telegram: approvalNotifyTelegram.value,
+    approval_tg_chat_id: approvalTgChatId.value.trim(),
+    approval_bypass_users: parseList(approvalBypassText.value),
   })
 }
 </script>
@@ -67,10 +83,11 @@ function handleSave() {
     </div>
 
     <div class="emby-config__body">
+      <div class="emby-config__section-label">登录准入控制</div>
       <div class="emby-settings-group">
         <div class="emby-settings-row">
           <div class="emby-settings-row__meta">
-            <div class="emby-settings-row__title">启用插件与登录准入控制</div>
+            <div class="emby-settings-row__title">启用登录准入控制</div>
             <div class="emby-settings-row__desc">拦截并校验通过 Emby 凭据发起的 MoviePilot 登录请求</div>
           </div>
           <v-switch v-model="enabled" color="primary" inset density="compact" hide-details />
@@ -121,6 +138,40 @@ function handleSave() {
         density="compact"
         hide-details="auto"
       />
+
+      <div class="emby-config__section-label mt-1">普通用户订阅审批</div>
+      <div class="emby-settings-group">
+        <div class="emby-settings-row">
+          <div class="emby-settings-row__meta">
+            <div class="emby-settings-row__title">开启订阅审批</div>
+            <div class="emby-settings-row__desc">普通用户添加订阅时先进入待审队列，审批通过后才提交到 MoviePilot</div>
+          </div>
+          <v-switch v-model="subscribeApprovalEnabled" color="primary" inset density="compact" hide-details />
+        </div>
+        <div class="emby-settings-row">
+          <div class="emby-settings-row__meta">
+            <div class="emby-settings-row__title">推送 Telegram 审批卡片</div>
+            <div class="emby-settings-row__desc">发送带海报、简介与「通过并提交 MP / 标记手动入库 / 拒绝申请」按钮通知</div>
+          </div>
+          <v-switch v-model="approvalNotifyTelegram" color="primary" inset density="compact" hide-details />
+        </div>
+      </div>
+
+      <v-text-field
+        v-model="approvalTgChatId"
+        label="审批通知 Telegram Chat ID（可选，留空走系统默认通知会话）"
+        variant="outlined"
+        density="compact"
+        hide-details="auto"
+      />
+      <v-textarea
+        v-model="approvalBypassText"
+        label="免审批直通用户名单（逗号或换行分隔，名单内用户订阅直接提交 MP）"
+        variant="outlined"
+        rows="2"
+        density="compact"
+        hide-details="auto"
+      />
     </div>
 
     <div class="emby-config__footer">
@@ -131,7 +182,7 @@ function handleSave() {
         prepend-icon="mdi-database-eye-outline"
         @click="emit('switch')"
       >
-        查看用户数据
+        查看用户与审批
       </v-btn>
       <v-spacer />
       <v-btn size="small" variant="text" rounded="lg" @click="emit('close')">取消</v-btn>
@@ -177,8 +228,15 @@ function handleSave() {
 .emby-config__body {
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 18px 20px;
+  gap: 12px;
+  padding: 16px 20px;
+}
+
+.emby-config__section-label {
+  color: rgb(var(--v-theme-primary));
+  font-size: 12.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
 }
 
 .emby-settings-group {

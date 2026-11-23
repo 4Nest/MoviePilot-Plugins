@@ -107,7 +107,7 @@ def test_plugin_manifest_and_runtime_hygiene() -> None:
     assert set(pkg.keys()) == {"EmbyUserManager", "SeedCleaner", "MediaVaultBridge"}
 
     expected = {
-        "EmbyUserManager": (EmbyUserManager, "1.2.4"),
+        "EmbyUserManager": (EmbyUserManager, "1.3.0"),
         "SeedCleaner": (SeedCleaner, "1.1.3"),
         "MediaVaultBridge": (MediaVaultBridge, "1.2.0"),
     }
@@ -130,7 +130,7 @@ def test_plugin_manifest_and_runtime_hygiene() -> None:
     assert not (REPO_ROOT / "plugins.v2" / "mediacovergenerator").exists()
 
     readme_text = (REPO_ROOT / "README.md").read_text(encoding="utf-8")
-    assert "v1.2.4" in readme_text
+    assert "v1.3.0" in readme_text
     assert "v1.1.3" in readme_text
     assert "v1.2.0" in readme_text
     assert "bilibilinotify" not in readme_text.lower()

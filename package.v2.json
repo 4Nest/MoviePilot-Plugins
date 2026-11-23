@@ -1,14 +1,15 @@
 {
   "EmbyUserManager": {
     "name": "Emby用户管理",
-    "description": "管理Emby媒体服务器账号增删改查、MoviePilot登录准入、黑白名单及订阅数据。",
-    "labels": "Emby,用户管理,订阅",
-    "version": "1.2.4",
+    "description": "管理Emby媒体服务器账号增删改查、MoviePilot登录准入、黑白名单及订阅审批。",
+    "labels": "Emby,用户管理,订阅,审批",
+    "version": "1.3.0",
     "icon": "emby.png",
     "author": "4Nest",
     "level": 1,
     "release": true,
     "history": {
+      "v1.3.0": "新增普通用户订阅审批闭环：支持拦截订阅进入待审队列、推送带海报与三键交互（通过并提交MP／标记手动入库／拒绝申请）的 Telegram 审批卡片、双向同步状态及免审名单配置。",
       "v1.2.4": "升级联邦管理页面为哑光分层卡片与胶囊切换器，并对齐宿主流体左右基准边距。",
       "v1.2.3": "切换为精简 Release ZIP 资产分发并剥离运行目录内前端源码。",
       "v1.2.2": "修复准入配置与白名单变更重启不落库缺陷，隔离 Emby 查询异常并优化用户迁移/删除按名过滤查询。",

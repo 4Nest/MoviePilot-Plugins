@@ -34,6 +34,10 @@ def test_config_persisted_across_save_create_and_rename(monkeypatch: pytest.Monk
         "blacklist": ["mallory"],
         "allowed_servers": ["EmbyMain"],
         "allow_emby_admin": False,
+        "subscribe_approval_enabled": False,
+        "approval_bypass_users": [],
+        "approval_notify_telegram": True,
+        "approval_tg_chat_id": "",
     }
     save_resp = plugin.api_save_config(normalized_payload)
     assert save_resp.success is True
@@ -239,4 +243,204 @@ def test_migrate_compatible_with_stub_models_and_duplicate_userconfig_keys(
     )
     plugin._migrate_local_username("stub_old", "stub_new")
     assert updated_records == [{"username": "stub_new"}]
+
+
+def test_subscribe_approval_telegram_card_and_actions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """验证普通用户订阅拦截、TG 卡片排版、64B 按钮约束、回调鉴权、通过/手动入库/拒绝与双向消息同步。"""
+    from app.core.event import Event
+    from app.schemas import SubscribeInterceptEventData
+    from app.schemas.types import ChainEventType, EventType, MediaType, SystemConfigKey
+
+    plugin = EmbyUserManager()
+    plugin.save_data("approval_requests", [])
+    plugin.init_plugin(
+        {
+            "enabled": True,
+            "subscribe_approval_enabled": True,
+            "approval_bypass_users": ["vip_user"],
+            "approval_notify_telegram": True,
+            "approval_tg_chat_id": "998877",
+        },
+        persist=True,
+    )
+
+    sent_direct_messages = []
+    edited_messages = []
+
+    monkeypatch.setattr(
+        plugin.chain,
+        "send_direct_message",
+        lambda msg: (
+            sent_direct_messages.append(msg),
+            SimpleNamespace(
+                success=True,
+                source="TelegramMain",
+                chat_id="998877",
+                message_id=4096,
+            ),
+        )[1],
+    )
+    monkeypatch.setattr(
+        plugin.chain,
+        "edit_message",
+        lambda **kwargs: (edited_messages.append(kwargs), True)[1],
+    )
+    monkeypatch.setattr(
+        "app.plugins.embyusermanager.SystemConfigOper.get",
+        lambda self, key: (
+            [
+                {
+                    "name": "TelegramMain",
+                    "type": "telegram",
+                    "config": {"TELEGRAM_ADMINS": "10001, @boss_admin", "TELEGRAM_CHAT_ID": "998877"},
+                }
+            ]
+            if key == SystemConfigKey.Notifications
+            else None
+        ),
+    )
+
+    # 1. 免审名单用户与超级管理员直通不拦截
+    bypass_event = SubscribeInterceptEventData(
+        username="vip_user",
+        mediainfo={"title": "心理测量者", "year": "2012", "type": "电视剧", "tmdb_id": 43865},
+        season=1,
+    )
+    plugin.handle_subscribe_intercept(Event(ChainEventType.SubscribeIntercept, bypass_event))
+    assert bypass_event.cancel is False
+    assert sent_direct_messages == []
+
+    # 2. 普通用户 ml 提交订阅 -> 拦截转入待审队列并推送 1:1 排版的 Telegram 审批卡片
+    ml_event = SubscribeInterceptEventData(
+        username="ml",
+        mediainfo={
+            "title": "心理测量者",
+            "year": "2012",
+            "type": "电视剧",
+            "tmdb_id": 43865,
+            "vote_average": 7.8,
+            "overview": "在人类的心理状态和性格倾向都将即时的数值化的未来。",
+            "poster_path": "https://img.example.com/psycho-pass.jpg",
+        },
+        season=1,
+        payload={"total_episode": 22},
+    )
+    plugin.handle_subscribe_intercept(Event(ChainEventType.SubscribeIntercept, ml_event))
+    assert ml_event.cancel is True
+    assert ml_event.pending_approval is True
+    assert ml_event.request_id
+    req_id = ml_event.request_id
+
+    assert len(sent_direct_messages) == 1
+    tg_msg = sent_direct_messages[0]
+    assert tg_msg.title == "🔔 新订阅审批"
+    assert "👤 申请人：ml" in tg_msg.text
+    assert "📌 内容：心理测量者 (2012)" in tg_msg.text
+    assert "📦 类型：剧集" in tg_msg.text
+    assert "🧩 季度：第 1 季" in tg_msg.text
+    assert "⭐ 评分：7.8" in tg_msg.text
+    assert "📝 简介：" in tg_msg.text
+    assert "⚠️ 通过后将立即提交到 MoviePilot。" in tg_msg.text
+    assert tg_msg.image == "https://img.example.com/psycho-pass.jpg"
+    assert len(tg_msg.buttons) == 2
+    assert [btn["text"] for btn in tg_msg.buttons[0]] == ["通过并提交 MP", "标记手动入库"]
+    assert [btn["text"] for btn in tg_msg.buttons[1]] == ["拒绝申请"]
+    for row in tg_msg.buttons:
+        for btn in row:
+            assert len(btn["callback_data"].encode("utf-8")) <= 64
+
+    # 3. 同一申请人重复提交同一媒体同季：幂等拦截，不重复发 TG
+    dup_event = SubscribeInterceptEventData(
+        username="ml",
+        mediainfo={"title": "心理测量者", "year": "2012", "type": "电视剧", "tmdb_id": 43865},
+        season=1,
+    )
+    plugin.handle_subscribe_intercept(Event(ChainEventType.SubscribeIntercept, dup_event))
+    assert dup_event.cancel is True
+    assert dup_event.request_id == req_id
+    assert len(sent_direct_messages) == 1
+
+    # 4. 非授权 TG 用户点击「通过并提交 MP」必须被拒绝
+    submitted_calls = []
+    monkeypatch.setattr(
+        "app.plugins.embyusermanager.SubscribeChain.add",
+        lambda self, **kwargs: (submitted_calls.append(kwargs), (886, "新增订阅成功"))[1],
+    )
+    plugin.handle_message_action(
+        Event(
+            EventType.MessageAction,
+            {
+                "plugin_id": "EmbyUserManager",
+                "text": f"sub_approve:{req_id}",
+                "userid": "55555",
+                "username": "intruder",
+                "source": "TelegramMain",
+                "original_chat_id": "998877",
+                "original_message_id": 4096,
+            },
+        )
+    )
+    assert submitted_calls == []
+    assert plugin._load_approvals()[0]["status"] == "pending"
+
+    # 5. 授权管理员点击「通过并提交 MP」-> 提交 MP 订阅（带 _skip_subscribe_intercept=True）并原地编辑卡片清空按钮
+    plugin.handle_message_action(
+        Event(
+            EventType.MessageAction,
+            {
+                "plugin_id": "EmbyUserManager",
+                "text": f"sub_approve:{req_id}",
+                "userid": "10001",
+                "username": "boss_admin",
+                "source": "TelegramMain",
+                "original_chat_id": "998877",
+                "original_message_id": 4096,
+            },
+        )
+    )
+    assert len(submitted_calls) == 1
+    assert submitted_calls[0]["username"] == "ml"
+    assert submitted_calls[0]["mtype"] == MediaType.TV
+    assert submitted_calls[0]["season"] == 1
+    assert submitted_calls[0]["_skip_subscribe_intercept"] is True
+    approved_rec = plugin._load_approvals()[0]
+    assert approved_rec["status"] == "approved"
+    assert approved_rec["subscribe_id"] == 886
+    assert len(edited_messages) == 1
+    assert "✅ 已通过并提交 MoviePilot #886" in edited_messages[0]["text"]
+    assert edited_messages[0]["buttons"] is None
+
+    # 6. 测试「标记手动入库」与「拒绝申请」（Web 端操作同样反向编辑 TG 卡片）
+    for idx, title in ((2, "攻壳机动队"), (3, "银河英雄传说")):
+        ev = SubscribeInterceptEventData(
+            username="ml",
+            mediainfo={"title": title, "year": "2020", "type": "电影", "tmdb_id": 9000 + idx},
+        )
+        plugin.handle_subscribe_intercept(Event(ChainEventType.SubscribeIntercept, ev))
+
+    pending_list = [item for item in plugin._load_approvals() if item["status"] == "pending"]
+    assert len(pending_list) == 2
+    manual_target = next(i for i in pending_list if i["title"] == "攻壳机动队")
+    reject_target = next(i for i in pending_list if i["title"] == "银河英雄传说")
+
+    manual_resp = plugin.api_approval_action(
+        {"request_id": manual_target["id"], "action": "manual"},
+        SimpleNamespace(name="admin"),
+    )
+    assert manual_resp.success is True
+    assert "📦 已标记手动入库" in edited_messages[-1]["text"]
+
+    reject_resp = plugin.api_approval_action(
+        {"request_id": reject_target["id"], "action": "reject"},
+        SimpleNamespace(name="admin"),
+    )
+    assert reject_resp.success is True
+    assert "❌ 已拒绝申请" in edited_messages[-1]["text"]
+
+    clear_resp = plugin.api_clear_approvals(SimpleNamespace(name="admin"))
+    assert clear_resp.success is True
+    assert plugin._load_approvals() == []
+
 
