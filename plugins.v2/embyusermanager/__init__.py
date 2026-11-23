@@ -597,6 +597,38 @@ class EmbyUserManager(_PluginBase):
         buttons = _build_approval_buttons(str(record["id"]))
         poster = record.get("poster") or record.get("backdrop") or None
         target_userid = self._approval_tg_chat_id or None
+
+        # 1. 优先通过已加载的 Telegram 通知模块客户端直接发送（同时支持 buttons 与返回 message_id）
+        try:
+            from app.core.module import ModuleManager
+            from app.schemas.types import ModuleType
+
+            for mod in ModuleManager().get_running_type_modules(ModuleType.Notification) or []:
+                if getattr(mod, "get_subtype", lambda: None)() != MessageChannel.Telegram:
+                    continue
+                get_instances = getattr(mod, "get_instances", None)
+                instances = get_instances() if callable(get_instances) else {}
+                for src_name, client in (instances or {}).items():
+                    send_msg_fn = getattr(client, "send_msg", None)
+                    if not callable(send_msg_fn):
+                        continue
+                    sent = send_msg_fn(
+                        title=title,
+                        text=text,
+                        image=poster,
+                        userid=target_userid,
+                        buttons=buttons,
+                    )
+                    if isinstance(sent, dict) and sent.get("success"):
+                        return {
+                            "tg_source": str(src_name),
+                            "tg_chat_id": str(sent.get("chat_id") or ""),
+                            "tg_message_id": sent.get("message_id"),
+                        }
+        except Exception as err:
+            logger.debug(f"通过 Telegram 模块实例直发审批卡片未命中，回退消息链：{err}")
+
+        # 2. 兼容测试替身或自定义消息模块回退
         notification = schemas.Notification(
             channel=MessageChannel.Telegram,
             mtype=NotificationType.Subscribe,
@@ -608,7 +640,7 @@ class EmbyUserManager(_PluginBase):
         )
         try:
             send_direct = getattr(self.chain, "send_direct_message", None)
-            if callable(send_direct):
+            if callable(send_direct) and not inspect.ismethod(send_direct):
                 resp = send_direct(notification)
                 if resp and getattr(resp, "success", False):
                     return {
@@ -617,7 +649,7 @@ class EmbyUserManager(_PluginBase):
                         "tg_message_id": getattr(resp, "message_id", None),
                     }
         except Exception as err:
-            logger.warning(f"直接发送 Telegram 订阅审批卡片失败，尝试常规通道回退：{err}")
+            logger.debug(f"测试直发通道回退：{err}")
 
         try:
             self.post_message(
