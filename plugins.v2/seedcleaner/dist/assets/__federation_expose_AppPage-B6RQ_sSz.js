@@ -1,5 +1,5 @@
 import { importShared } from './__federation_fn_import-JrT3xvdd.js';
-import Config, { _ as _export_sfc } from './__federation_expose_Config-CPZjCExW.js';
+import Config, { _ as _export_sfc } from './__federation_expose_Config-6y2I8eE9.js';
 
 function formatSingleLineTime(value) {
   if (!value) return "-";
@@ -1228,9 +1228,10 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       "initial-config": config.value,
                       api: props.api,
                       embedded: true,
+                      "downloader-names": downloaders.value.map((d) => d.name),
                       onSave: saveConfig,
                       onClose: _cache[15] || (_cache[15] = ($event) => settingsDialog.value = false)
-                    }, null, 8, ["initial-config", "api"])
+                    }, null, 8, ["initial-config", "api", "downloader-names"])
                   ]),
                   _: 1
                 })
@@ -1627,6 +1628,6 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
   }
 });
 
-const AppPage = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-68295eef"]]);
+const AppPage = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-a0708df4"]]);
 
 export { AppPage as default };

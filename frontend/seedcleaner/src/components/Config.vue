@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 
 interface CleanRuleForm {
   id: string
@@ -53,13 +53,53 @@ const props = defineProps({
   initialConfig: { type: Object, default: () => ({}) },
   api: { type: Object, default: () => ({}) },
   embedded: { type: Boolean, default: false },
+  downloaderNames: { type: Array as () => string[], default: () => [] },
 })
 const emit = defineEmits(['save', 'close', 'switch', 'layout'])
+
+const remoteDownloaders = ref<string[]>([])
+const loadingDownloaders = ref(false)
+
+async function fetchDownloaders() {
+  const getter = (props.api as any)?.get
+  if (typeof getter !== 'function') return
+  loadingDownloaders.value = true
+  try {
+    const res = await getter('download/clients')
+    const list = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : []
+    const names = list
+      .map((item: any) => (typeof item === 'string' ? item : item?.name))
+      .map((name: any) => String(name || '').trim())
+      .filter(Boolean)
+    if (names.length > 0) {
+      remoteDownloaders.value = Array.from(new Set(names))
+      return
+    }
+    const settingRes = await getter('system/setting/Downloaders')
+    const rawSetting = Array.isArray(settingRes)
+      ? settingRes
+      : Array.isArray(settingRes?.data?.value)
+        ? settingRes.data.value
+        : Array.isArray(settingRes?.data)
+          ? settingRes.data
+          : []
+    const fallbackNames = rawSetting
+      .filter((item: any) => item && item.enabled !== false)
+      .map((item: any) => String(item.name || '').trim())
+      .filter(Boolean)
+    remoteDownloaders.value = Array.from(new Set(fallbackNames))
+  } catch {
+    // 忽略探测异常，保留父组件传入或规则已有的下载器列表
+  } finally {
+    loadingDownloaders.value = false
+  }
+}
 
 onMounted(() => {
   if (!props.embedded) {
     emit('layout', { maxWidth: '64rem' })
   }
+  void fetchDownloaders()
 })
 
 const stateItems = [
@@ -158,6 +198,24 @@ watch(
   { deep: true },
 )
 
+const downloaderOptions = computed<string[]>(() => {
+  const merged = new Set<string>()
+  for (const name of props.downloaderNames || []) {
+    const trimmed = String(name || '').trim()
+    if (trimmed) merged.add(trimmed)
+  }
+  for (const name of remoteDownloaders.value) {
+    if (name) merged.add(name)
+  }
+  for (const rule of config.value.rules || []) {
+    for (const name of rule.downloaders || []) {
+      const trimmed = String(name || '').trim()
+      if (trimmed) merged.add(trimmed)
+    }
+  }
+  return Array.from(merged)
+})
+
 function addRule() {
   config.value.rules.push(defaultRule())
   activeTab.value = 'rules'
@@ -205,62 +263,90 @@ function saveConfig() {
 
       <v-window v-model="activeTab">
         <v-window-item value="general">
-          <div class="seed-settings-group mb-4">
-            <div class="seed-settings-row">
-              <div class="seed-settings-row__meta">
-                <div class="seed-settings-row__title">启用插件与定时巡检</div>
-                <div class="seed-settings-row__desc">按 Cron 周期扫描已启用下载器的做种任务并执行淘汰策略</div>
-              </div>
-              <v-switch v-model="config.enabled" color="primary" inset density="compact" hide-details />
+          <div class="seed-section-card mb-4">
+            <div class="seed-section-card__head">
+              <v-icon icon="mdi-toggle-switch-outline" size="16" color="primary" />
+              <span>运行开关</span>
             </div>
-            <div class="seed-settings-row">
-              <div class="seed-settings-row__meta">
-                <div class="seed-settings-row__title">清理后发送汇总通知</div>
-                <div class="seed-settings-row__desc">有种子被移除时通过系统通知渠道推送统计报告</div>
+            <div class="seed-toggle-grid">
+              <div class="seed-toggle-tile" :class="{ 'is-active': config.enabled }">
+                <div class="seed-toggle-tile__top">
+                  <span class="seed-toggle-tile__title">启用定时巡检</span>
+                  <v-switch v-model="config.enabled" color="primary" inset density="compact" hide-details />
+                </div>
+                <div class="seed-toggle-tile__desc">按 Cron 周期扫描已启用下载器的做种任务并执行淘汰策略</div>
               </div>
-              <v-switch v-model="config.notify" color="primary" inset density="compact" hide-details />
-            </div>
-            <div class="seed-settings-row">
-              <div class="seed-settings-row__meta">
-                <div class="seed-settings-row__title">全局仅清理已完成任务</div>
-                <div class="seed-settings-row__desc">强制跳过下载中或未完成进度 100% 的种子</div>
+
+              <div class="seed-toggle-tile" :class="{ 'is-active': config.notify }">
+                <div class="seed-toggle-tile__top">
+                  <span class="seed-toggle-tile__title">清理汇总通知</span>
+                  <v-switch v-model="config.notify" color="primary" inset density="compact" hide-details />
+                </div>
+                <div class="seed-toggle-tile__desc">有种子被移除时通过系统通知渠道推送统计报告</div>
               </div>
-              <v-switch v-model="config.only_completed" color="primary" inset density="compact" hide-details />
+
+              <div class="seed-toggle-tile" :class="{ 'is-active': config.only_completed }">
+                <div class="seed-toggle-tile__top">
+                  <span class="seed-toggle-tile__title">仅清理已完成</span>
+                  <v-switch v-model="config.only_completed" color="primary" inset density="compact" hide-details />
+                </div>
+                <div class="seed-toggle-tile__desc">强制跳过下载中或未完成进度 100% 的种子</div>
+              </div>
             </div>
           </div>
 
-          <div class="seed-panel-box">
-            <v-row>
+          <div class="seed-section-card">
+            <div class="seed-section-card__head">
+              <v-icon icon="mdi-shield-lock-outline" size="16" color="primary" />
+              <span>调度与全局保护</span>
+            </div>
+            <v-row dense class="seed-form-grid">
               <v-col cols="12" md="5">
                 <v-text-field
                   v-model="config.cron"
                   label="巡检 Cron（例如 */30 * * * *）"
+                  prepend-inner-icon="mdi-clock-outline"
                   variant="outlined"
                   density="compact"
                   hide-details
                 />
               </v-col>
               <v-col cols="12" md="7">
+                <v-text-field
+                  v-model="config.global_exclude_regex"
+                  label="全局排除名称正则（大小写不敏感）"
+                  placeholder="例如：-(HDArea|EPiC|WiKi|FRDS)$"
+                  prepend-inner-icon="mdi-regex"
+                  variant="outlined"
+                  density="compact"
+                  hide-details
+                />
+              </v-col>
+              <v-col cols="12" class="mt-2">
                 <v-combobox
                   v-model="config.protect_tags"
                   multiple
                   chips
                   closable-chips
                   label="全局保护标签（回车添加，命中永不删除）"
+                  prepend-inner-icon="mdi-tag-multiple-outline"
                   variant="outlined"
                   density="compact"
                   hide-details
-                />
-              </v-col>
-              <v-col cols="12">
-                <v-text-field
-                  v-model="config.global_exclude_regex"
-                  label="全局排除名称正则（大小写不敏感）"
-                  placeholder="例如：-(HDArea|EPiC|WiKi|FRDS)$"
-                  variant="outlined"
-                  density="compact"
-                  hide-details
-                />
+                >
+                  <template #chip="{ props: chipProps, item }">
+                    <v-chip
+                      v-bind="chipProps"
+                      size="small"
+                      color="primary"
+                      variant="tonal"
+                      label
+                      class="seed-tag-chip"
+                    >
+                      {{ item.raw }}
+                    </v-chip>
+                  </template>
+                </v-combobox>
               </v-col>
             </v-row>
           </div>
@@ -303,16 +389,32 @@ function saveConfig() {
                     <v-text-field v-model="rule.name" label="规则名称" variant="outlined" density="compact" hide-details />
                   </v-col>
                   <v-col cols="12" md="4">
-                    <v-combobox
+                    <v-select
                       v-model="rule.downloaders"
+                      :items="downloaderOptions"
+                      :loading="loadingDownloaders"
                       multiple
                       chips
                       closable-chips
+                      clearable
+                      no-data-text="暂无已启用下载器"
                       label="限定下载器（空为全部）"
                       variant="outlined"
                       density="compact"
                       hide-details
-                    />
+                    >
+                      <template #chip="{ props: chipProps, item }">
+                        <v-chip
+                          v-bind="chipProps"
+                          size="x-small"
+                          color="primary"
+                          variant="tonal"
+                          label
+                        >
+                          {{ item.raw }}
+                        </v-chip>
+                      </template>
+                    </v-select>
                   </v-col>
                   <v-col cols="12" md="3">
                     <v-text-field
@@ -694,41 +796,78 @@ function saveConfig() {
   background-color: rgb(var(--v-theme-surface));
 }
 
-.seed-settings-group {
-  border: 1px solid rgba(var(--v-theme-on-surface), 0.085);
-  border-radius: 10px;
+.seed-section-card {
+  padding: 14px 16px 16px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.09);
+  border-radius: 12px;
   background: rgba(var(--v-theme-on-surface), 0.02);
-  overflow: hidden;
 }
 
-.seed-settings-row {
+.seed-section-card__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+  color: rgba(var(--v-theme-on-surface), 0.88);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.seed-toggle-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.seed-toggle-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 11px 12px 12px;
+  border: 1px solid rgba(var(--v-theme-on-surface), 0.08);
+  border-radius: 10px;
+  background: rgb(var(--v-theme-surface));
+  transition: border-color 0.16s ease, background-color 0.16s ease;
+}
+
+.seed-toggle-tile.is-active {
+  border-color: rgba(var(--v-theme-primary), 0.32);
+  background: rgba(var(--v-theme-primary), 0.04);
+}
+
+.seed-toggle-tile__top {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 11px 14px;
+  gap: 8px;
 }
 
-.seed-settings-row + .seed-settings-row {
-  border-top: 1px solid rgba(var(--v-theme-on-surface), 0.065);
+.seed-toggle-tile__top :deep(.v-switch) {
+  flex: 0 0 auto;
 }
 
-.seed-settings-row__meta {
-  min-width: 0;
-  flex: 1 1 auto;
+.seed-toggle-tile__title {
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: rgb(var(--v-theme-on-surface));
 }
 
-.seed-settings-row__title {
-  font-size: 13.5px;
+.seed-toggle-tile__desc {
+  color: rgba(var(--v-theme-on-surface), 0.58);
+  font-size: 11.5px;
+  line-height: 1.45;
+}
+
+.seed-tag-chip {
   font-weight: 500;
-  line-height: 1.35;
 }
 
-.seed-settings-row__desc {
-  margin-top: 2px;
-  color: rgba(var(--v-theme-on-surface), 0.56);
-  font-size: 12px;
-  line-height: 1.4;
+@media (max-width: 760px) {
+  .seed-toggle-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
 }
 
 .seed-config :deep(.v-field) {

@@ -2,7 +2,7 @@ import { importShared } from './__federation_fn_import-JrT3xvdd.js';
 
 const {defineComponent:_defineComponent} = await importShared('vue');
 
-const {resolveComponent:_resolveComponent,createVNode:_createVNode,createElementVNode:_createElementVNode,openBlock:_openBlock,createElementBlock:_createElementBlock,createCommentVNode:_createCommentVNode,createTextVNode:_createTextVNode,withCtx:_withCtx,toDisplayString:_toDisplayString,renderList:_renderList,Fragment:_Fragment,createBlock:_createBlock,normalizeClass:_normalizeClass} = await importShared('vue');
+const {resolveComponent:_resolveComponent,createVNode:_createVNode,createElementVNode:_createElementVNode,openBlock:_openBlock,createElementBlock:_createElementBlock,createCommentVNode:_createCommentVNode,createTextVNode:_createTextVNode,withCtx:_withCtx,toDisplayString:_toDisplayString,normalizeClass:_normalizeClass,mergeProps:_mergeProps,renderList:_renderList,Fragment:_Fragment,createBlock:_createBlock} = await importShared('vue');
 
 const _hoisted_1 = { class: "seed-config" };
 const _hoisted_2 = {
@@ -11,51 +11,79 @@ const _hoisted_2 = {
 };
 const _hoisted_3 = { class: "seed-config__title" };
 const _hoisted_4 = { class: "seed-config__body" };
-const _hoisted_5 = { class: "seed-settings-group mb-4" };
-const _hoisted_6 = { class: "seed-settings-row" };
-const _hoisted_7 = { class: "seed-settings-row" };
-const _hoisted_8 = { class: "seed-settings-row" };
-const _hoisted_9 = { class: "seed-panel-box" };
-const _hoisted_10 = { class: "d-flex align-center justify-space-between mb-3 flex-wrap ga-2" };
-const _hoisted_11 = {
+const _hoisted_5 = { class: "seed-section-card mb-4" };
+const _hoisted_6 = { class: "seed-section-card__head" };
+const _hoisted_7 = { class: "seed-toggle-grid" };
+const _hoisted_8 = { class: "seed-toggle-tile__top" };
+const _hoisted_9 = { class: "seed-toggle-tile__top" };
+const _hoisted_10 = { class: "seed-toggle-tile__top" };
+const _hoisted_11 = { class: "seed-section-card" };
+const _hoisted_12 = { class: "seed-section-card__head" };
+const _hoisted_13 = { class: "d-flex align-center justify-space-between mb-3 flex-wrap ga-2" };
+const _hoisted_14 = {
   key: 0,
   class: "seed-empty-rules"
 };
-const _hoisted_12 = { class: "d-flex align-center ga-2 flex-wrap" };
-const _hoisted_13 = { class: "font-weight-medium text-body-2" };
-const _hoisted_14 = { class: "seed-mini-chip" };
-const _hoisted_15 = {
+const _hoisted_15 = { class: "d-flex align-center ga-2 flex-wrap" };
+const _hoisted_16 = { class: "font-weight-medium text-body-2" };
+const _hoisted_17 = { class: "seed-mini-chip" };
+const _hoisted_18 = {
   key: 0,
   class: "seed-mini-chip is-success"
 };
-const _hoisted_16 = {
+const _hoisted_19 = {
   key: 1,
   class: "seed-mini-chip is-info"
 };
-const _hoisted_17 = { class: "seed-subhead mt-4 mb-2" };
-const _hoisted_18 = { class: "seed-subhead mt-4 mb-2" };
-const _hoisted_19 = { class: "d-flex justify-end ga-2 mt-3" };
-const _hoisted_20 = { class: "seed-panel-box" };
-const _hoisted_21 = { class: "d-flex align-center justify-space-between flex-wrap ga-2 mb-3" };
-const _hoisted_22 = { class: "d-flex align-center ga-2" };
-const _hoisted_23 = { class: "seed-config__footer" };
-const {onMounted,ref,watch} = await importShared('vue');
+const _hoisted_20 = { class: "seed-subhead mt-4 mb-2" };
+const _hoisted_21 = { class: "seed-subhead mt-4 mb-2" };
+const _hoisted_22 = { class: "d-flex justify-end ga-2 mt-3" };
+const _hoisted_23 = { class: "seed-panel-box" };
+const _hoisted_24 = { class: "d-flex align-center justify-space-between flex-wrap ga-2 mb-3" };
+const _hoisted_25 = { class: "d-flex align-center ga-2" };
+const _hoisted_26 = { class: "seed-config__footer" };
+const {computed,onMounted,ref,watch} = await importShared('vue');
 
 const _sfc_main = /* @__PURE__ */ _defineComponent({
   __name: "Config",
   props: {
     initialConfig: { type: Object, default: () => ({}) },
     api: { type: Object, default: () => ({}) },
-    embedded: { type: Boolean, default: false }
+    embedded: { type: Boolean, default: false },
+    downloaderNames: { type: Array, default: () => [] }
   },
   emits: ["save", "close", "switch", "layout"],
   setup(__props, { emit: __emit }) {
     const props = __props;
     const emit = __emit;
+    const remoteDownloaders = ref([]);
+    const loadingDownloaders = ref(false);
+    async function fetchDownloaders() {
+      const getter = props.api?.get;
+      if (typeof getter !== "function") return;
+      loadingDownloaders.value = true;
+      try {
+        const res = await getter("download/clients");
+        const list = Array.isArray(res) ? res : Array.isArray(res?.data) ? res.data : [];
+        const names = list.map((item) => typeof item === "string" ? item : item?.name).map((name) => String(name || "").trim()).filter(Boolean);
+        if (names.length > 0) {
+          remoteDownloaders.value = Array.from(new Set(names));
+          return;
+        }
+        const settingRes = await getter("system/setting/Downloaders");
+        const rawSetting = Array.isArray(settingRes) ? settingRes : Array.isArray(settingRes?.data?.value) ? settingRes.data.value : Array.isArray(settingRes?.data) ? settingRes.data : [];
+        const fallbackNames = rawSetting.filter((item) => item && item.enabled !== false).map((item) => String(item.name || "").trim()).filter(Boolean);
+        remoteDownloaders.value = Array.from(new Set(fallbackNames));
+      } catch {
+      } finally {
+        loadingDownloaders.value = false;
+      }
+    }
     onMounted(() => {
       if (!props.embedded) {
         emit("layout", { maxWidth: "64rem" });
       }
+      void fetchDownloaders();
     });
     const stateItems = [
       { title: "做种中", value: "seeding" },
@@ -146,6 +174,23 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
       },
       { deep: true }
     );
+    const downloaderOptions = computed(() => {
+      const merged = /* @__PURE__ */ new Set();
+      for (const name of props.downloaderNames || []) {
+        const trimmed = String(name || "").trim();
+        if (trimmed) merged.add(trimmed);
+      }
+      for (const name of remoteDownloaders.value) {
+        if (name) merged.add(name);
+      }
+      for (const rule of config.value.rules || []) {
+        for (const name of rule.downloaders || []) {
+          const trimmed = String(name || "").trim();
+          if (trimmed) merged.add(trimmed);
+        }
+      }
+      return Array.from(merged);
+    });
     function addRule() {
       config.value.rules.push(defaultRule());
       activeTab.value = "rules";
@@ -272,50 +317,77 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                 default: _withCtx(() => [
                   _createElementVNode("div", _hoisted_5, [
                     _createElementVNode("div", _hoisted_6, [
-                      _cache[22] || (_cache[22] = _createElementVNode("div", { class: "seed-settings-row__meta" }, [
-                        _createElementVNode("div", { class: "seed-settings-row__title" }, "启用插件与定时巡检"),
-                        _createElementVNode("div", { class: "seed-settings-row__desc" }, "按 Cron 周期扫描已启用下载器的做种任务并执行淘汰策略")
-                      ], -1)),
-                      _createVNode(_component_v_switch, {
-                        modelValue: config.value.enabled,
-                        "onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => config.value.enabled = $event),
-                        color: "primary",
-                        inset: "",
-                        density: "compact",
-                        "hide-details": ""
-                      }, null, 8, ["modelValue"])
+                      _createVNode(_component_v_icon, {
+                        icon: "mdi-toggle-switch-outline",
+                        size: "16",
+                        color: "primary"
+                      }),
+                      _cache[22] || (_cache[22] = _createElementVNode("span", null, "运行开关", -1))
                     ]),
                     _createElementVNode("div", _hoisted_7, [
-                      _cache[23] || (_cache[23] = _createElementVNode("div", { class: "seed-settings-row__meta" }, [
-                        _createElementVNode("div", { class: "seed-settings-row__title" }, "清理后发送汇总通知"),
-                        _createElementVNode("div", { class: "seed-settings-row__desc" }, "有种子被移除时通过系统通知渠道推送统计报告")
-                      ], -1)),
-                      _createVNode(_component_v_switch, {
-                        modelValue: config.value.notify,
-                        "onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => config.value.notify = $event),
-                        color: "primary",
-                        inset: "",
-                        density: "compact",
-                        "hide-details": ""
-                      }, null, 8, ["modelValue"])
-                    ]),
-                    _createElementVNode("div", _hoisted_8, [
-                      _cache[24] || (_cache[24] = _createElementVNode("div", { class: "seed-settings-row__meta" }, [
-                        _createElementVNode("div", { class: "seed-settings-row__title" }, "全局仅清理已完成任务"),
-                        _createElementVNode("div", { class: "seed-settings-row__desc" }, "强制跳过下载中或未完成进度 100% 的种子")
-                      ], -1)),
-                      _createVNode(_component_v_switch, {
-                        modelValue: config.value.only_completed,
-                        "onUpdate:modelValue": _cache[4] || (_cache[4] = ($event) => config.value.only_completed = $event),
-                        color: "primary",
-                        inset: "",
-                        density: "compact",
-                        "hide-details": ""
-                      }, null, 8, ["modelValue"])
+                      _createElementVNode("div", {
+                        class: _normalizeClass(["seed-toggle-tile", { "is-active": config.value.enabled }])
+                      }, [
+                        _createElementVNode("div", _hoisted_8, [
+                          _cache[23] || (_cache[23] = _createElementVNode("span", { class: "seed-toggle-tile__title" }, "启用定时巡检", -1)),
+                          _createVNode(_component_v_switch, {
+                            modelValue: config.value.enabled,
+                            "onUpdate:modelValue": _cache[2] || (_cache[2] = ($event) => config.value.enabled = $event),
+                            color: "primary",
+                            inset: "",
+                            density: "compact",
+                            "hide-details": ""
+                          }, null, 8, ["modelValue"])
+                        ]),
+                        _cache[24] || (_cache[24] = _createElementVNode("div", { class: "seed-toggle-tile__desc" }, "按 Cron 周期扫描已启用下载器的做种任务并执行淘汰策略", -1))
+                      ], 2),
+                      _createElementVNode("div", {
+                        class: _normalizeClass(["seed-toggle-tile", { "is-active": config.value.notify }])
+                      }, [
+                        _createElementVNode("div", _hoisted_9, [
+                          _cache[25] || (_cache[25] = _createElementVNode("span", { class: "seed-toggle-tile__title" }, "清理汇总通知", -1)),
+                          _createVNode(_component_v_switch, {
+                            modelValue: config.value.notify,
+                            "onUpdate:modelValue": _cache[3] || (_cache[3] = ($event) => config.value.notify = $event),
+                            color: "primary",
+                            inset: "",
+                            density: "compact",
+                            "hide-details": ""
+                          }, null, 8, ["modelValue"])
+                        ]),
+                        _cache[26] || (_cache[26] = _createElementVNode("div", { class: "seed-toggle-tile__desc" }, "有种子被移除时通过系统通知渠道推送统计报告", -1))
+                      ], 2),
+                      _createElementVNode("div", {
+                        class: _normalizeClass(["seed-toggle-tile", { "is-active": config.value.only_completed }])
+                      }, [
+                        _createElementVNode("div", _hoisted_10, [
+                          _cache[27] || (_cache[27] = _createElementVNode("span", { class: "seed-toggle-tile__title" }, "仅清理已完成", -1)),
+                          _createVNode(_component_v_switch, {
+                            modelValue: config.value.only_completed,
+                            "onUpdate:modelValue": _cache[4] || (_cache[4] = ($event) => config.value.only_completed = $event),
+                            color: "primary",
+                            inset: "",
+                            density: "compact",
+                            "hide-details": ""
+                          }, null, 8, ["modelValue"])
+                        ]),
+                        _cache[28] || (_cache[28] = _createElementVNode("div", { class: "seed-toggle-tile__desc" }, "强制跳过下载中或未完成进度 100% 的种子", -1))
+                      ], 2)
                     ])
                   ]),
-                  _createElementVNode("div", _hoisted_9, [
-                    _createVNode(_component_v_row, null, {
+                  _createElementVNode("div", _hoisted_11, [
+                    _createElementVNode("div", _hoisted_12, [
+                      _createVNode(_component_v_icon, {
+                        icon: "mdi-shield-lock-outline",
+                        size: "16",
+                        color: "primary"
+                      }),
+                      _cache[29] || (_cache[29] = _createElementVNode("span", null, "调度与全局保护", -1))
+                    ]),
+                    _createVNode(_component_v_row, {
+                      dense: "",
+                      class: "seed-form-grid"
+                    }, {
                       default: _withCtx(() => [
                         _createVNode(_component_v_col, {
                           cols: "12",
@@ -326,6 +398,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                               modelValue: config.value.cron,
                               "onUpdate:modelValue": _cache[5] || (_cache[5] = ($event) => config.value.cron = $event),
                               label: "巡检 Cron（例如 */30 * * * *）",
+                              "prepend-inner-icon": "mdi-clock-outline",
                               variant: "outlined",
                               density: "compact",
                               "hide-details": ""
@@ -338,13 +411,12 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                           md: "7"
                         }, {
                           default: _withCtx(() => [
-                            _createVNode(_component_v_combobox, {
-                              modelValue: config.value.protect_tags,
-                              "onUpdate:modelValue": _cache[6] || (_cache[6] = ($event) => config.value.protect_tags = $event),
-                              multiple: "",
-                              chips: "",
-                              "closable-chips": "",
-                              label: "全局保护标签（回车添加，命中永不删除）",
+                            _createVNode(_component_v_text_field, {
+                              modelValue: config.value.global_exclude_regex,
+                              "onUpdate:modelValue": _cache[6] || (_cache[6] = ($event) => config.value.global_exclude_regex = $event),
+                              label: "全局排除名称正则（大小写不敏感）",
+                              placeholder: "例如：-(HDArea|EPiC|WiKi|FRDS)$",
+                              "prepend-inner-icon": "mdi-regex",
                               variant: "outlined",
                               density: "compact",
                               "hide-details": ""
@@ -352,17 +424,39 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                           ]),
                           _: 1
                         }),
-                        _createVNode(_component_v_col, { cols: "12" }, {
+                        _createVNode(_component_v_col, {
+                          cols: "12",
+                          class: "mt-2"
+                        }, {
                           default: _withCtx(() => [
-                            _createVNode(_component_v_text_field, {
-                              modelValue: config.value.global_exclude_regex,
-                              "onUpdate:modelValue": _cache[7] || (_cache[7] = ($event) => config.value.global_exclude_regex = $event),
-                              label: "全局排除名称正则（大小写不敏感）",
-                              placeholder: "例如：-(HDArea|EPiC|WiKi|FRDS)$",
+                            _createVNode(_component_v_combobox, {
+                              modelValue: config.value.protect_tags,
+                              "onUpdate:modelValue": _cache[7] || (_cache[7] = ($event) => config.value.protect_tags = $event),
+                              multiple: "",
+                              chips: "",
+                              "closable-chips": "",
+                              label: "全局保护标签（回车添加，命中永不删除）",
+                              "prepend-inner-icon": "mdi-tag-multiple-outline",
                               variant: "outlined",
                               density: "compact",
                               "hide-details": ""
-                            }, null, 8, ["modelValue"])
+                            }, {
+                              chip: _withCtx(({ props: chipProps, item }) => [
+                                _createVNode(_component_v_chip, _mergeProps(chipProps, {
+                                  size: "small",
+                                  color: "primary",
+                                  variant: "tonal",
+                                  label: "",
+                                  class: "seed-tag-chip"
+                                }), {
+                                  default: _withCtx(() => [
+                                    _createTextVNode(_toDisplayString(item.raw), 1)
+                                  ]),
+                                  _: 2
+                                }, 1040)
+                              ]),
+                              _: 1
+                            }, 8, ["modelValue"])
                           ]),
                           _: 1
                         })
@@ -375,8 +469,8 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
               }),
               _createVNode(_component_v_window_item, { value: "rules" }, {
                 default: _withCtx(() => [
-                  _createElementVNode("div", _hoisted_10, [
-                    _cache[26] || (_cache[26] = _createElementVNode("span", { class: "text-caption text-medium-emphasis" }, " 规则自上而下匹配，同一种子只命中一次；数值条件支持 AND / OR 切换。 ", -1)),
+                  _createElementVNode("div", _hoisted_13, [
+                    _cache[31] || (_cache[31] = _createElementVNode("span", { class: "text-caption text-medium-emphasis" }, " 规则自上而下匹配，同一种子只命中一次；数值条件支持 AND / OR 切换。 ", -1)),
                     _createVNode(_component_v_btn, {
                       size: "small",
                       color: "primary",
@@ -385,20 +479,20 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                       "prepend-icon": "mdi-plus",
                       onClick: addRule
                     }, {
-                      default: _withCtx(() => [..._cache[25] || (_cache[25] = [
+                      default: _withCtx(() => [..._cache[30] || (_cache[30] = [
                         _createTextVNode(" 添加规则 ", -1)
                       ])]),
                       _: 1
                     })
                   ]),
-                  !config.value.rules.length ? (_openBlock(), _createElementBlock("div", _hoisted_11, [
+                  !config.value.rules.length ? (_openBlock(), _createElementBlock("div", _hoisted_14, [
                     _createVNode(_component_v_icon, {
                       icon: "mdi-format-list-checks",
                       size: "30",
                       class: "text-medium-emphasis mb-1"
                     }),
-                    _cache[27] || (_cache[27] = _createElementVNode("div", { class: "text-body-2 font-weight-medium" }, "暂无清理规则", -1)),
-                    _cache[28] || (_cache[28] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "可点击右上角「添加规则」，或在页面中导入预设模板", -1))
+                    _cache[32] || (_cache[32] = _createElementVNode("div", { class: "text-body-2 font-weight-medium" }, "暂无清理规则", -1)),
+                    _cache[33] || (_cache[33] = _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, "可点击右上角「添加规则」，或在页面中导入预设模板", -1))
                   ])) : (_openBlock(), _createBlock(_component_v_expansion_panels, {
                     key: 1,
                     multiple: "",
@@ -413,7 +507,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                           default: _withCtx(() => [
                             _createVNode(_component_v_expansion_panel_title, { class: "py-2" }, {
                               default: _withCtx(() => [
-                                _createElementVNode("div", _hoisted_12, [
+                                _createElementVNode("div", _hoisted_15, [
                                   _createVNode(_component_v_icon, {
                                     size: "18",
                                     color: rule.enabled ? "success" : "disabled"
@@ -423,10 +517,10 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                                     ]),
                                     _: 2
                                   }, 1032, ["color"]),
-                                  _createElementVNode("span", _hoisted_13, _toDisplayString(index + 1) + ". " + _toDisplayString(rule.name), 1),
-                                  _createElementVNode("span", _hoisted_14, _toDisplayString(rule.metric_logic === "any" ? "任一达标 OR" : "全部满足 AND"), 1),
-                                  rule.require_transferred ? (_openBlock(), _createElementBlock("span", _hoisted_15, "入库锁")) : _createCommentVNode("", true),
-                                  !rule.delete_files ? (_openBlock(), _createElementBlock("span", _hoisted_16, "保留源文件")) : _createCommentVNode("", true)
+                                  _createElementVNode("span", _hoisted_16, _toDisplayString(index + 1) + ". " + _toDisplayString(rule.name), 1),
+                                  _createElementVNode("span", _hoisted_17, _toDisplayString(rule.metric_logic === "any" ? "任一达标 OR" : "全部满足 AND"), 1),
+                                  rule.require_transferred ? (_openBlock(), _createElementBlock("span", _hoisted_18, "入库锁")) : _createCommentVNode("", true),
+                                  !rule.delete_files ? (_openBlock(), _createElementBlock("span", _hoisted_19, "保留源文件")) : _createCommentVNode("", true)
                                 ])
                               ]),
                               _: 2
@@ -459,17 +553,36 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                                       md: "4"
                                     }, {
                                       default: _withCtx(() => [
-                                        _createVNode(_component_v_combobox, {
+                                        _createVNode(_component_v_select, {
                                           modelValue: rule.downloaders,
                                           "onUpdate:modelValue": ($event) => rule.downloaders = $event,
+                                          items: downloaderOptions.value,
+                                          loading: loadingDownloaders.value,
                                           multiple: "",
                                           chips: "",
                                           "closable-chips": "",
+                                          clearable: "",
+                                          "no-data-text": "暂无已启用下载器",
                                           label: "限定下载器（空为全部）",
                                           variant: "outlined",
                                           density: "compact",
                                           "hide-details": ""
-                                        }, null, 8, ["modelValue", "onUpdate:modelValue"])
+                                        }, {
+                                          chip: _withCtx(({ props: chipProps, item }) => [
+                                            _createVNode(_component_v_chip, _mergeProps({ ref_for: true }, chipProps, {
+                                              size: "x-small",
+                                              color: "primary",
+                                              variant: "tonal",
+                                              label: ""
+                                            }), {
+                                              default: _withCtx(() => [
+                                                _createTextVNode(_toDisplayString(item.raw), 1)
+                                              ]),
+                                              _: 2
+                                            }, 1040)
+                                          ]),
+                                          _: 1
+                                        }, 8, ["modelValue", "onUpdate:modelValue", "items", "loading"])
                                       ]),
                                       _: 2
                                     }, 1024),
@@ -613,7 +726,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                                               size: "small",
                                               class: "flex-1-1"
                                             }, {
-                                              default: _withCtx(() => [..._cache[29] || (_cache[29] = [
+                                              default: _withCtx(() => [..._cache[34] || (_cache[34] = [
                                                 _createTextVNode("数值全部满足 AND", -1)
                                               ])]),
                                               _: 1
@@ -623,7 +736,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                                               size: "small",
                                               class: "flex-1-1"
                                             }, {
-                                              default: _withCtx(() => [..._cache[30] || (_cache[30] = [
+                                              default: _withCtx(() => [..._cache[35] || (_cache[35] = [
                                                 _createTextVNode("任一数值达标 OR", -1)
                                               ])]),
                                               _: 1
@@ -637,12 +750,12 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                                   ]),
                                   _: 2
                                 }, 1024),
-                                _createElementVNode("div", _hoisted_17, [
+                                _createElementVNode("div", _hoisted_20, [
                                   _createVNode(_component_v_icon, {
                                     icon: "mdi-regex",
                                     size: "16"
                                   }),
-                                  _cache[31] || (_cache[31] = _createElementVNode("span", null, "正则匹配条件", -1))
+                                  _cache[36] || (_cache[36] = _createElementVNode("span", null, "正则匹配条件", -1))
                                 ]),
                                 _createVNode(_component_v_row, { dense: "" }, {
                                   default: _withCtx(() => [
@@ -818,12 +931,12 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                                   ]),
                                   _: 2
                                 }, 1024),
-                                _createElementVNode("div", _hoisted_18, [
+                                _createElementVNode("div", _hoisted_21, [
                                   _createVNode(_component_v_icon, {
                                     icon: "mdi-chart-box-outline",
                                     size: "16"
                                   }),
-                                  _cache[32] || (_cache[32] = _createElementVNode("span", null, "数值达标条件", -1))
+                                  _cache[37] || (_cache[37] = _createElementVNode("span", null, "数值达标条件", -1))
                                 ]),
                                 _createVNode(_component_v_row, { dense: "" }, {
                                   default: _withCtx(() => [
@@ -961,7 +1074,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                                   ]),
                                   _: 2
                                 }, 1024),
-                                _createElementVNode("div", _hoisted_19, [
+                                _createElementVNode("div", _hoisted_22, [
                                   _createVNode(_component_v_btn, {
                                     size: "small",
                                     variant: "text",
@@ -969,7 +1082,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                                     "prepend-icon": "mdi-content-copy",
                                     onClick: ($event) => duplicateRule(index)
                                   }, {
-                                    default: _withCtx(() => [..._cache[33] || (_cache[33] = [
+                                    default: _withCtx(() => [..._cache[38] || (_cache[38] = [
                                       _createTextVNode(" 复制规则 ", -1)
                                     ])]),
                                     _: 1
@@ -982,7 +1095,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
                                     "prepend-icon": "mdi-delete-outline",
                                     onClick: ($event) => removeRule(index)
                                   }, {
-                                    default: _withCtx(() => [..._cache[34] || (_cache[34] = [
+                                    default: _withCtx(() => [..._cache[39] || (_cache[39] = [
                                       _createTextVNode(" 删除规则 ", -1)
                                     ])]),
                                     _: 1
@@ -1003,15 +1116,15 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
               }),
               _createVNode(_component_v_window_item, { value: "disk" }, {
                 default: _withCtx(() => [
-                  _createElementVNode("div", _hoisted_20, [
-                    _createElementVNode("div", _hoisted_21, [
-                      _createElementVNode("div", _hoisted_22, [
+                  _createElementVNode("div", _hoisted_23, [
+                    _createElementVNode("div", _hoisted_24, [
+                      _createElementVNode("div", _hoisted_25, [
                         _createVNode(_component_v_icon, {
                           icon: "mdi-shield-half-full",
                           color: "warning",
                           size: "20"
                         }),
-                        _cache[35] || (_cache[35] = _createElementVNode("div", null, [
+                        _cache[40] || (_cache[40] = _createElementVNode("div", null, [
                           _createElementVNode("div", { class: "text-subtitle-2 font-weight-bold" }, "磁盘低水位应急保盘"),
                           _createElementVNode("div", { class: "text-caption text-medium-emphasis" }, " 仅在剩余空间低于阈值时启动，仍强制校验已完成、已入库、无保护标签与最低保护时长。 ")
                         ], -1))
@@ -1133,7 +1246,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
             _: 1
           }, 8, ["modelValue"])
         ]),
-        _createElementVNode("div", _hoisted_23, [
+        _createElementVNode("div", _hoisted_26, [
           !props.embedded ? (_openBlock(), _createBlock(_component_v_btn, {
             key: 0,
             size: "small",
@@ -1142,7 +1255,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
             "prepend-icon": "mdi-database-eye-outline",
             onClick: _cache[15] || (_cache[15] = ($event) => emit("switch"))
           }, {
-            default: _withCtx(() => [..._cache[36] || (_cache[36] = [
+            default: _withCtx(() => [..._cache[41] || (_cache[41] = [
               _createTextVNode(" 查看数据 ", -1)
             ])]),
             _: 1
@@ -1154,7 +1267,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
             rounded: "lg",
             onClick: _cache[16] || (_cache[16] = ($event) => emit("close"))
           }, {
-            default: _withCtx(() => [..._cache[37] || (_cache[37] = [
+            default: _withCtx(() => [..._cache[42] || (_cache[42] = [
               _createTextVNode("取消", -1)
             ])]),
             _: 1
@@ -1166,7 +1279,7 @@ const _sfc_main = /* @__PURE__ */ _defineComponent({
             rounded: "lg",
             onClick: saveConfig
           }, {
-            default: _withCtx(() => [..._cache[38] || (_cache[38] = [
+            default: _withCtx(() => [..._cache[43] || (_cache[43] = [
               _createTextVNode("保存", -1)
             ])]),
             _: 1
@@ -1185,6 +1298,6 @@ const _export_sfc = (sfc, props) => {
   return target;
 };
 
-const Config = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-51a62715"]]);
+const Config = /* @__PURE__ */ _export_sfc(_sfc_main, [["__scopeId", "data-v-2e0e6ee8"]]);
 
 export { _export_sfc as _, Config as default };

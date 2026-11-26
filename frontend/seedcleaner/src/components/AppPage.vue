@@ -676,6 +676,7 @@ onMounted(refreshAll)
             :initial-config="config"
             :api="props.api"
             :embedded="true"
+            :downloader-names="downloaders.map(d => d.name)"
             @save="saveConfig"
             @close="settingsDialog = false"
           />
